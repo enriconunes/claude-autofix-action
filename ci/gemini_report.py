@@ -256,7 +256,7 @@ def send_to_gemini(api_key: str, payload: Dict[str, Any], model_name: str) -> Di
         raise SystemExit(1)
 
 
-def send_health_check_prompt(api_key: str, model_name: str) -> None:
+def send_health_check_prompt(api_key: str) -> None:
     """Send a minimal prompt to verify Gemini connectivity."""
 
     payload = {
@@ -273,7 +273,7 @@ def send_health_check_prompt(api_key: str, model_name: str) -> None:
     }
 
     print("No failing tests were captured. Sending Gemini health check prompt...")
-    response = send_to_gemini(api_key, payload, model_name)
+    response = send_to_gemini(api_key, payload)
     print("Gemini health check response:")
     print(json.dumps(response, indent=2, ensure_ascii=False))
 
@@ -284,9 +284,6 @@ def main() -> None:
     failures = extract_failures(report)
 
     api_key = os.environ.get("GEMINI_KEY")
-    model_name = resolve_model_name()
-
-    print(f"Using Gemini model: {model_name}")
 
     if not failures:
         summary = report.get("summary", {})
@@ -302,7 +299,7 @@ def main() -> None:
             print("GEMINI_KEY environment variable is not set; skipping Gemini health check.")
             return
 
-        send_health_check_prompt(api_key, model_name)
+        send_health_check_prompt(api_key)
         return
 
     if not api_key:
