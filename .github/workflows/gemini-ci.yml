@@ -1,0 +1,41 @@
+name: Gemini Assisted CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  test-and-analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-json-report
+
+      - name: Run pytest with JSON report
+        id: tests
+        continue-on-error: true
+        run: |
+          pytest --json-report
+
+      - name: Send failure details to Gemini
+        if: steps.tests.outcome == 'failure'
+        env:
+          GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
+        run: |
+          python ci/gemini_report.py --report .report.json
+
+      - name: Fail if tests failed
+        if: steps.tests.outcome == 'failure'
+        run: |
+          exit 1
