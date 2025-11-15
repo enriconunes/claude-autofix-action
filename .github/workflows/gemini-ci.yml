@@ -26,10 +26,10 @@ jobs:
         id: tests
         continue-on-error: true
         run: |
-          pytest --json-report *.test.py
+          pytest --json-report
 
-      - name: Send failure details to Gemini
-        if: steps.tests.outcome == 'failure'
+      - name: Process pytest report with Gemini
+        if: always()
         env:
           GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
         run: |
