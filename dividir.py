@@ -1,6 +1,7 @@
 def dividir(numerador, denominador):
     return numerador / denominador
 
-# BUG: dividir por zero gera ZeroDivisionError.
-resultado = dividir(10, 0)
-print("Resultado:", resultado)
+
+if __name__ == "__main__":
+    resultado = dividir(10, 2)
+    print("Resultado:", resultado)
