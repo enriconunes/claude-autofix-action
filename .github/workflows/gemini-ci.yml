@@ -42,7 +42,6 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const core = require('@actions/core');
             const commentPath = 'gemini_comment.md';
             if (!fs.existsSync(commentPath)) {
               core.info('No Gemini comment file found; skipping PR comment.');
