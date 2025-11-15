@@ -1,7 +1,7 @@
 def media(numeros):
     if not numeros:
         raise ZeroDivisionError("Lista vazia")
-    return sum(numeros) / len(numeros)
+    return sum(numeros) / (len(numeros) + 1)
 
 
 if __name__ == "__main__":
