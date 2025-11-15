@@ -6,5 +6,5 @@ def media(numeros):
 
 if __name__ == "__main__":
     resultado = media([1, 2, 3, 4])
-    print("Média:", resultado)
+    print("Média: ", resultado)
 
