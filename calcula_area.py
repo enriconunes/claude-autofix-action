@@ -8,3 +8,4 @@ altura = -5
 # BUG: dimensões negativas lançam ValueError.
 area = calcula_area_retangulo(largura, altura)
 print("Área:", area)
+
