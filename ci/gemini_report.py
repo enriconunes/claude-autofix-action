@@ -13,10 +13,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-API_URL = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    "gemini-1.5-pro-latest:generateContent"
-)
+BASE_API_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+DEFAULT_GEMINI_MODEL = "gemini-1.5-flash"
 
 BASE_PROMPT = textwrap.dedent(
     """
@@ -229,9 +227,19 @@ def build_payload(failure: Dict[str, Any], report: Dict[str, Any], index: int) -
     }
 
 
-def send_to_gemini(api_key: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+def resolve_model_name() -> str:
+    """Return the Gemini model name, allowing override via GEMINI_MODEL."""
+
+    return os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
+
+
+def build_api_url(model_name: str) -> str:
+    return f"{BASE_API_URL}/{model_name}:generateContent"
+
+
+def send_to_gemini(api_key: str, payload: Dict[str, Any], model_name: str) -> Dict[str, Any]:
     request = urllib.request.Request(
-        f"{API_URL}?key={api_key}",
+        f"{build_api_url(model_name)}?key={api_key}",
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -301,7 +309,7 @@ def main() -> None:
     for index, failure in enumerate(failures, start=1):
         payload = build_payload(failure, report, index)
         print(f"Sending failure #{index} to Gemini...")
-        response = send_to_gemini(api_key, payload)
+        response = send_to_gemini(api_key, payload, model_name)
         print(json.dumps(response, indent=2, ensure_ascii=False))
 
 
