@@ -3,9 +3,9 @@ def calcula_area_retangulo(largura, altura):
         raise ValueError("Dimensões negativas")
     return largura * altura
 
-largura = 10
-altura = -5
-# BUG: dimensões negativas lançam ValueError.
-area = calcula_area_retangulo(largura, altura)
-print("Área:", area)
 
+if __name__ == "__main__":
+    largura = 10
+    altura = 5
+    area = calcula_area_retangulo(largura, altura)
+    print("Área:", area)
