@@ -13,10 +13,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-API_URL = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    "gemini-1.5-pro-latest:generateContent"
-)
+BASE_API_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+DEFAULT_GEMINI_MODEL = "gemini-1.5-flash"
 
 BASE_PROMPT = textwrap.dedent(
     """
@@ -229,9 +227,19 @@ def build_payload(failure: Dict[str, Any], report: Dict[str, Any], index: int) -
     }
 
 
-def send_to_gemini(api_key: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+def resolve_model_name() -> str:
+    """Return the Gemini model name, allowing override via GEMINI_MODEL."""
+
+    return os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
+
+
+def build_api_url(model_name: str) -> str:
+    return f"{BASE_API_URL}/{model_name}:generateContent"
+
+
+def send_to_gemini(api_key: str, payload: Dict[str, Any], model_name: str) -> Dict[str, Any]:
     request = urllib.request.Request(
-        f"{API_URL}?key={api_key}",
+        f"{build_api_url(model_name)}?key={api_key}",
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -248,16 +256,60 @@ def send_to_gemini(api_key: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         raise SystemExit(1)
 
 
+def send_health_check_prompt(api_key: str, model_name: Optional[str] = None) -> None:
+    """Send a minimal prompt to verify Gemini connectivity."""
+
+    resolved_model = model_name or resolve_model_name()
+
+    payload = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "text": "1+1. Answer with only one number, nothing more.",
+                    }
+                ],
+            }
+        ]
+    }
+
+    print(
+        "No failing tests were captured. Sending Gemini health check prompt using "
+        f"model '{resolved_model}'..."
+    )
+    response = send_to_gemini(api_key, payload, resolved_model)
+    print("Gemini health check response:")
+    print(json.dumps(response, indent=2, ensure_ascii=False))
+
+
 def main() -> None:
     args = parse_args()
     report = load_report(args.report)
     failures = extract_failures(report)
 
+    api_key = os.environ.get("GEMINI_KEY")
+    model_name = resolve_model_name()
+
+    print(f"Using Gemini model: {model_name}")
+
     if not failures:
-        print("All tests passed. No data sent to Gemini.")
+        summary = report.get("summary", {})
+        errors = summary.get("errors") or 0
+        if errors:
+            print(
+                "Pytest did not record any failing tests, but collection errors were reported."
+            )
+        else:
+            print("All tests passed. No failing tests were recorded.")
+
+        if not api_key:
+            print("GEMINI_KEY environment variable is not set; skipping Gemini health check.")
+            return
+
+        send_health_check_prompt(api_key, model_name)
         return
 
-    api_key = os.environ.get("GEMINI_KEY")
     if not api_key:
         print("GEMINI_KEY environment variable is not set.", file=sys.stderr)
         raise SystemExit(1)
@@ -265,7 +317,7 @@ def main() -> None:
     for index, failure in enumerate(failures, start=1):
         payload = build_payload(failure, report, index)
         print(f"Sending failure #{index} to Gemini...")
-        response = send_to_gemini(api_key, payload)
+        response = send_to_gemini(api_key, payload, model_name)
         print(json.dumps(response, indent=2, ensure_ascii=False))
 
 
