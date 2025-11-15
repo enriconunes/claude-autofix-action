@@ -255,30 +255,30 @@ def resolve_model_name() -> str:
 def iter_candidate_model_names(model_name: str):
     """Yield model name variants to improve compatibility across API versions."""
 
+    suffixes = ("-latest", "-001", "-002", "-003", "-004", "-005", "-8b")
     yielded = set()
 
-    def add(name: str):
+    def emit(name: Optional[str]):
         if name and name not in yielded:
             yielded.add(name)
-            return name
-        return None
+            return True
+        return False
 
-    primary = add(model_name)
-    if primary:
-        yield primary
+    model_name = model_name.strip()
+    stem = model_name
+    for suffix in suffixes:
+        if stem.endswith(suffix):
+            stem = stem[: -len(suffix)]
+            break
 
-    if model_name.endswith("-latest"):
-        stripped = model_name[: -len("-latest")]
-        alternate = add(stripped)
-        if alternate:
-            yield alternate
-        return
+    ordered_candidates = [model_name]
+    if stem:
+        ordered_candidates.append(stem)
+        ordered_candidates.extend(f"{stem}{suffix}" for suffix in suffixes)
 
-    versioned_suffixes = ("-001", "-002", "-003", "-004", "-005", "-8b")
-    if not model_name.endswith(versioned_suffixes):
-        alternate = add(f"{model_name}-latest")
-        if alternate:
-            yield alternate
+    for candidate in ordered_candidates:
+        if emit(candidate):
+            yield candidate
 
 
 def iter_api_urls(model_name: str):
