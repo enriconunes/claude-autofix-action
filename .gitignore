@@ -1,0 +1,112 @@
+# ==========================================
+#  Arquivos de Python
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ==========================================
+#  Arquivos de logs
+# ==========================================
+*.log
+
+# ==========================================
+#  Ambientes virtuais
+# ==========================================
+.venv/
+venv/
+env/
+ENV/
+
+# ==========================================
+#  Configurações de dependências
+# ==========================================
+pip-wheel-metadata/
+pip-log.txt
+
+# ==========================================
+#  Distribuição / build
+# ==========================================
+build/
+dist/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+wheels/
+*.egg-info/
+*.egg
+
+# ==========================================
+#  Configurações de testes
+# ==========================================
+htmlcov/
+.tox/
+.nox/
+.coverage
+coverage.xml
+.coverage.*
+.cache
+pytest_cache/
+.pytest_cache/
+
+# ==========================================
+#  Jupyter / IPython
+# ==========================================
+.ipynb_checkpoints
+profile_default/
+ipython_config.py
+
+# ==========================================
+#  Banco de dados / dados
+# ==========================================
+*.sqlite3
+*.db
+*.sqlite
+
+# ==========================================
+#  IDEs
+# ==========================================
+# VSCode
+.vscode/
+# PyCharm
+.idea/
+*.iml
+
+# ==========================================
+#  SO (Windows / macOS / Linux)
+# ==========================================
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ==========================================
+#  Docker
+# ==========================================
+*.pid
+
+# ==========================================
+#  Outras pastas comuns
+# ==========================================
+.env
+.env.*
+*.env
+*.secret
+*.pem
+*.key
+
+# Arquivos temporários
+*.tmp
+*.temp
+*.bak
+
+# ==========================================
+#  Node (caso seja um projeto combinado)
+# ==========================================
+node_modules/
