@@ -8,6 +8,7 @@ import json
 import os
 import sys
 import textwrap
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -17,7 +18,8 @@ API_BASE_URLS = (
     "https://generativelanguage.googleapis.com/v1beta/models",
     "https://generativelanguage.googleapis.com/v1/models",
 )
-DEFAULT_GEMINI_MODEL = "gemini-1.5-flash"
+DEFAULT_GEMINI_MODEL = "gemini-pro-latest"  # Free tier compatible
+FALLBACK_MODELS = ["gemini-pro", "gemini-1.0-pro", "gemini-1.5-flash"]
 
 BASE_PROMPT = textwrap.dedent(
     """
@@ -240,7 +242,8 @@ def normalize_model_name(model_name: str) -> str:
     if model_name.endswith(explicit_suffixes) or model_name.endswith("-8b"):
         return model_name
 
-    return f"{model_name}-latest"
+    # Don't add -latest automatically, try the base name first
+    return model_name
 
 
 def resolve_model_name() -> str:
@@ -271,9 +274,12 @@ def iter_candidate_model_names(model_name: str):
             stem = stem[: -len(suffix)]
             break
 
-    ordered_candidates = [model_name]
+    # Try original name first (if it has -latest, that's what we want), then variants
+    ordered_candidates = []
+    ordered_candidates.append(model_name)  # Try original name first (e.g., gemini-pro-latest)
+    if stem and stem != model_name:
+        ordered_candidates.append(stem)  # Then base name
     if stem:
-        ordered_candidates.append(stem)
         ordered_candidates.extend(f"{stem}{suffix}" for suffix in suffixes)
 
     for candidate in ordered_candidates:
@@ -282,13 +288,40 @@ def iter_candidate_model_names(model_name: str):
 
 
 def iter_api_urls(model_name: str):
+    # First try the specified model and its variants
     for candidate_name in iter_candidate_model_names(model_name):
         for base_url in API_BASE_URLS:
             yield f"{base_url}/{candidate_name}:generateContent"
+    
+    # Then try fallback models if the specified model doesn't work
+    for fallback_model in FALLBACK_MODELS:
+        for base_url in API_BASE_URLS:
+            yield f"{base_url}/{fallback_model}:generateContent"
+
+
+def list_available_models(api_key: str) -> List[str]:
+    """List available Gemini models for the given API key."""
+    models = []
+    for base_url in API_BASE_URLS:
+        try:
+            list_url = f"{base_url}?key={api_key}"
+            request = urllib.request.Request(list_url, method="GET")
+            with urllib.request.urlopen(request, timeout=30) as response:
+                data = json.load(response)
+                if "models" in data:
+                    for model in data["models"]:
+                        model_name = model.get("name", "").split("/")[-1]
+                        if model_name and model_name not in models:
+                            models.append(model_name)
+                break
+        except Exception as exc:
+            continue
+    return models
 
 
 def send_to_gemini(api_key: str, payload: Dict[str, Any], model_name: str) -> Dict[str, Any]:
     errors = []
+    retry_503_urls = []  # URLs that returned 503 (overloaded but exist)
 
     for url in iter_api_urls(model_name):
         print(f"Attempting Gemini request using endpoint: {url}")
@@ -308,41 +341,43 @@ def send_to_gemini(api_key: str, payload: Dict[str, Any], model_name: str) -> Di
                 f"Gemini API request failed via {url}: {exc.code} {exc.reason}\n{error_detail}"
             )
             print(message, file=sys.stderr)
-            errors.append(message)
+            
+            # 503 means model exists but is overloaded - retry it at the end
+            if exc.code == 503:
+                retry_503_urls.append(url)
+            else:
+                errors.append(message)
         except urllib.error.URLError as exc:
             message = f"Failed to reach Gemini API via {url}: {exc}"
             print(message, file=sys.stderr)
             errors.append(message)
 
+    # Retry 503 URLs (models that exist but were overloaded)
+    if retry_503_urls:
+        print("\nRetrying models that were temporarily overloaded (503)...", file=sys.stderr)
+        time.sleep(2)  # Brief wait before retry
+        for url in retry_503_urls:
+            print(f"Retrying Gemini request using endpoint: {url}")
+            request = urllib.request.Request(
+                f"{url}?key={api_key}",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    return json.load(response)
+            except urllib.error.HTTPError as exc:
+                error_detail = exc.read().decode("utf-8", errors="replace")
+                print(
+                    f"Retry failed via {url}: {exc.code} {exc.reason}\n{error_detail}",
+                    file=sys.stderr
+                )
+            except urllib.error.URLError as exc:
+                print(f"Retry failed to reach {url}: {exc}", file=sys.stderr)
+
     print("All Gemini API attempts failed.", file=sys.stderr)
     raise SystemExit(1)
-
-
-def send_health_check_prompt(api_key: str, model_name: Optional[str] = None) -> None:
-    """Send a minimal prompt to verify Gemini connectivity."""
-
-    resolved_model = model_name or resolve_model_name()
-
-    payload = {
-        "contents": [
-            {
-                "role": "user",
-                "parts": [
-                    {
-                        "text": "1+1. Answer with only one number, nothing more.",
-                    }
-                ],
-            }
-        ]
-    }
-
-    print(
-        "No failing tests were captured. Sending Gemini health check prompt using "
-        f"model '{resolved_model}'..."
-    )
-    response = send_to_gemini(api_key, payload, resolved_model)
-    print("Gemini health check response:")
-    print(json.dumps(response, indent=2, ensure_ascii=False))
 
 
 def send_health_check_prompt(api_key: str, model_name: Optional[str] = None) -> None:
