@@ -13,7 +13,10 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-BASE_API_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+API_BASE_URLS = (
+    "https://generativelanguage.googleapis.com/v1beta/models",
+    "https://generativelanguage.googleapis.com/v1/models",
+)
 DEFAULT_GEMINI_MODEL = "gemini-1.5-flash"
 
 BASE_PROMPT = textwrap.dedent(
@@ -227,33 +230,119 @@ def build_payload(failure: Dict[str, Any], report: Dict[str, Any], index: int) -
     }
 
 
+def normalize_model_name(model_name: str) -> str:
+    """Ensure the Gemini model name includes an explicit version suffix."""
+
+    model_name = model_name.strip()
+
+    explicit_suffixes = ("-latest", "-001", "-002", "-003", "-004", "-005")
+
+    if model_name.endswith(explicit_suffixes) or model_name.endswith("-8b"):
+        return model_name
+
+    return f"{model_name}-latest"
+
+
 def resolve_model_name() -> str:
     """Return the Gemini model name, allowing override via GEMINI_MODEL."""
 
-    return os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
+    configured_name = os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
+    if not configured_name or not configured_name.strip():
+        configured_name = DEFAULT_GEMINI_MODEL
+    return normalize_model_name(configured_name)
 
 
-def build_api_url(model_name: str) -> str:
-    return f"{BASE_API_URL}/{model_name}:generateContent"
+def iter_candidate_model_names(model_name: str):
+    """Yield model name variants to improve compatibility across API versions."""
+
+    yielded = set()
+
+    def add(name: str):
+        if name and name not in yielded:
+            yielded.add(name)
+            return name
+        return None
+
+    primary = add(model_name)
+    if primary:
+        yield primary
+
+    if model_name.endswith("-latest"):
+        stripped = model_name[: -len("-latest")]
+        alternate = add(stripped)
+        if alternate:
+            yield alternate
+        return
+
+    versioned_suffixes = ("-001", "-002", "-003", "-004", "-005", "-8b")
+    if not model_name.endswith(versioned_suffixes):
+        alternate = add(f"{model_name}-latest")
+        if alternate:
+            yield alternate
+
+
+def iter_api_urls(model_name: str):
+    for candidate_name in iter_candidate_model_names(model_name):
+        for base_url in API_BASE_URLS:
+            yield f"{base_url}/{candidate_name}:generateContent"
 
 
 def send_to_gemini(api_key: str, payload: Dict[str, Any], model_name: str) -> Dict[str, Any]:
-    request = urllib.request.Request(
-        f"{build_api_url(model_name)}?key={api_key}",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
+    errors = []
+
+    for url in iter_api_urls(model_name):
+        print(f"Attempting Gemini request using endpoint: {url}")
+        request = urllib.request.Request(
+            f"{url}?key={api_key}",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                return json.load(response)
+        except urllib.error.HTTPError as exc:
+            error_detail = exc.read().decode("utf-8", errors="replace")
+            message = (
+                f"Gemini API request failed via {url}: {exc.code} {exc.reason}\n{error_detail}"
+            )
+            print(message, file=sys.stderr)
+            errors.append(message)
+        except urllib.error.URLError as exc:
+            message = f"Failed to reach Gemini API via {url}: {exc}"
+            print(message, file=sys.stderr)
+            errors.append(message)
+
+    print("All Gemini API attempts failed.", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def send_health_check_prompt(api_key: str, model_name: Optional[str] = None) -> None:
+    """Send a minimal prompt to verify Gemini connectivity."""
+
+    resolved_model = model_name or resolve_model_name()
+
+    payload = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "text": "1+1. Answer with only one number, nothing more.",
+                    }
+                ],
+            }
+        ]
+    }
+
+    print(
+        "No failing tests were captured. Sending Gemini health check prompt using "
+        f"model '{resolved_model}'..."
     )
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            return json.load(response)
-    except urllib.error.HTTPError as exc:
-        error_detail = exc.read().decode("utf-8", errors="replace")
-        print(f"Gemini API request failed: {exc.code} {exc.reason}\n{error_detail}", file=sys.stderr)
-        raise SystemExit(1)
-    except urllib.error.URLError as exc:
-        print(f"Failed to reach Gemini API: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+    response = send_to_gemini(api_key, payload, resolved_model)
+    print("Gemini health check response:")
+    print(json.dumps(response, indent=2, ensure_ascii=False))
 
 
 def send_health_check_prompt(api_key: str, model_name: Optional[str] = None) -> None:
