@@ -3,7 +3,7 @@ def media(numeros):
         raise ZeroDivisionError("Lista vazia")
     return sum(numeros) / len(numeros)
 
-lista_vazia = []
-# BUG: chamar media com uma lista vazia causa ZeroDivisionError.
-resultado = media(lista_vazia)
-print("Média:", resultado)
+
+if __name__ == "__main__":
+    resultado = media([1, 2, 3, 4])
+    print("Média:", resultado)
