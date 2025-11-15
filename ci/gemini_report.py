@@ -248,16 +248,52 @@ def send_to_gemini(api_key: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         raise SystemExit(1)
 
 
+def send_health_check_prompt(api_key: str) -> None:
+    """Send a minimal prompt to verify Gemini connectivity."""
+
+    payload = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "text": "1+1. Answer with only one number, nothing more.",
+                    }
+                ],
+            }
+        ]
+    }
+
+    print("No failing tests were captured. Sending Gemini health check prompt...")
+    response = send_to_gemini(api_key, payload)
+    print("Gemini health check response:")
+    print(json.dumps(response, indent=2, ensure_ascii=False))
+
+
 def main() -> None:
     args = parse_args()
     report = load_report(args.report)
     failures = extract_failures(report)
 
+    api_key = os.environ.get("GEMINI_KEY")
+
     if not failures:
-        print("All tests passed. No data sent to Gemini.")
+        summary = report.get("summary", {})
+        errors = summary.get("errors") or 0
+        if errors:
+            print(
+                "Pytest did not record any failing tests, but collection errors were reported."
+            )
+        else:
+            print("All tests passed. No failing tests were recorded.")
+
+        if not api_key:
+            print("GEMINI_KEY environment variable is not set; skipping Gemini health check.")
+            return
+
+        send_health_check_prompt(api_key)
         return
 
-    api_key = os.environ.get("GEMINI_KEY")
     if not api_key:
         print("GEMINI_KEY environment variable is not set.", file=sys.stderr)
         raise SystemExit(1)
