@@ -4,7 +4,7 @@ def multiplicar_lista(numeros):
         resultado *= n
     return resultado
 
-texto = "123"
-# BUG: iterar sobre uma string gera um TypeError durante a multiplicação.
-produto = multiplicar_lista(texto)
-print("Produto:", produto)
+
+if __name__ == "__main__":
+    produto = multiplicar_lista([1, 2, 3, 4])
+    print("Produto:", produto)
