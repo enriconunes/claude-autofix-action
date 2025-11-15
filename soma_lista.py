@@ -4,10 +4,8 @@ def soma_lista(numeros):
         total += n
     return total
 
-lista = [1, 2, 3, 4]
 
-# BUG: estamos a chamar a função com um valor inteiro,
-# quando ela espera uma lista — isso vai gerar um TypeError.
-resultado = soma_lista(5)
-
-print("Resultado:", resultado)
+if __name__ == "__main__":
+    lista = [1, 2, 3, 4]
+    resultado = soma_lista(lista)
+    print("Resultado:", resultado)

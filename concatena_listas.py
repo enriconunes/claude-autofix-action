@@ -1,8 +1,9 @@
 def concatena_listas(lista1, lista2):
     return lista1 + lista2
 
-primeira = [1, 2, 3]
-segunda = None
-# BUG: tentar concatenar com None causa TypeError.
-resultado = concatena_listas(primeira, segunda)
-print("Resultado:", resultado)
+
+if __name__ == "__main__":
+    primeira = [1, 2, 3]
+    segunda = [4, 5]
+    resultado = concatena_listas(primeira, segunda)
+    print("Resultado:", resultado)
