@@ -26,7 +26,7 @@ jobs:
         id: tests
         continue-on-error: true
         run: |
-          pytest --json-report
+          pytest --json-report *.test.py
 
       - name: Send failure details to Gemini
         if: steps.tests.outcome == 'failure'
