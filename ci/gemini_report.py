@@ -345,6 +345,33 @@ def send_health_check_prompt(api_key: str, model_name: Optional[str] = None) -> 
     print(json.dumps(response, indent=2, ensure_ascii=False))
 
 
+def send_health_check_prompt(api_key: str, model_name: Optional[str] = None) -> None:
+    """Send a minimal prompt to verify Gemini connectivity."""
+
+    resolved_model = model_name or resolve_model_name()
+
+    payload = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "text": "1+1. Answer with only one number, nothing more.",
+                    }
+                ],
+            }
+        ]
+    }
+
+    print(
+        "No failing tests were captured. Sending Gemini health check prompt using "
+        f"model '{resolved_model}'..."
+    )
+    response = send_to_gemini(api_key, payload, resolved_model)
+    print("Gemini health check response:")
+    print(json.dumps(response, indent=2, ensure_ascii=False))
+
+
 def main() -> None:
     args = parse_args()
     report = load_report(args.report)
