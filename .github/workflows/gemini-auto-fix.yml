@@ -1,0 +1,270 @@
+name: Gemini Auto-Fix
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Run ID of the failed workflow (optional)'
+        required: false
+  workflow_run:
+    workflows: ["Gemini Assisted CI"]
+    types:
+      - completed
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  auto-fix:
+    runs-on: ubuntu-latest
+    # Only run if the previous workflow failed or if manually triggered
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'failure')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Need to fetch full history for git operations
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-json-report
+
+      - name: Download test report from previous workflow
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: pytest-report
+          path: .
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run tests to generate report (if not from workflow_run)
+        if: github.event_name == 'workflow_dispatch'
+        continue-on-error: true
+        run: |
+          pytest --json-report || true
+
+      - name: Check if report exists
+        id: check_report
+        run: |
+          if [ -f ".report.json" ]; then
+            echo "report_exists=true" >> $GITHUB_OUTPUT
+            echo "✓ Test report found"
+          else
+            echo "report_exists=false" >> $GITHUB_OUTPUT
+            echo "⚠️  Test report not found"
+          fi
+
+      - name: Generate and apply fixes
+        if: steps.check_report.outputs.report_exists == 'true'
+        env:
+          GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
+        run: |
+          python ci/gemini_fix.py --report .report.json --apply --max-fixes 5
+
+      - name: Check for changes
+        id: check_changes
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "✓ Code changes detected"
+            git status --short
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "ℹ️  No changes were made"
+          fi
+
+      - name: Configure git
+        if: steps.check_changes.outputs.has_changes == 'true'
+        run: |
+          git config user.name "Gemini Auto-Fix Bot"
+          git config user.email "gemini-bot@users.noreply.github.com"
+
+      - name: Create fix branch and commit
+        if: steps.check_changes.outputs.has_changes == 'true'
+        id: create_branch
+        run: |
+          # Generate unique branch name
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          BRANCH_NAME="gemini-auto-fix-${TIMESTAMP}"
+          echo "branch_name=${BRANCH_NAME}" >> $GITHUB_OUTPUT
+
+          # Create and switch to new branch
+          git checkout -b "${BRANCH_NAME}"
+
+          # Add all changes
+          git add .
+
+          # Create commit with details
+          git commit -m "fix: Apply Gemini-suggested fixes for failing tests
+
+          This PR was automatically created by the Gemini Auto-Fix workflow.
+
+          The following changes were applied to fix failing tests:
+          $(cat gemini-patches/summary.json | python3 -c 'import sys, json; data=json.load(sys.stdin); print(f\"- {data[\"successful\"]} patch(es) applied successfully\"); print(f\"- {data[\"failed\"]} patch(es) failed to apply\") if data[\"failed\"] > 0 else None')
+
+          🤖 Generated with Gemini AI
+          "
+
+          echo "✓ Commit created on branch ${BRANCH_NAME}"
+
+      - name: Push branch
+        if: steps.check_changes.outputs.has_changes == 'true'
+        run: |
+          git push origin ${{ steps.create_branch.outputs.branch_name }}
+          echo "✓ Branch pushed to remote"
+
+      - name: Read patch summary
+        if: steps.check_changes.outputs.has_changes == 'true'
+        id: read_summary
+        run: |
+          if [ -f "gemini-patches/summary.json" ]; then
+            SUMMARY=$(cat gemini-patches/summary.json)
+            echo "summary=${SUMMARY}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Pull Request
+        if: steps.check_changes.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Build PR body
+          PR_BODY="## 🤖 Gemini Auto-Fix
+
+          This PR contains automated fixes suggested by Gemini AI for failing tests.
+
+          ### Summary
+          "
+
+          # Add patch details from summary
+          if [ -f "gemini-patches/summary.json" ]; then
+            SUCCESSFUL=$(cat gemini-patches/summary.json | python3 -c 'import sys, json; print(json.load(sys.stdin)["successful"])')
+            FAILED=$(cat gemini-patches/summary.json | python3 -c 'import sys, json; print(json.load(sys.stdin)["failed"])')
+            PROCESSED=$(cat gemini-patches/summary.json | python3 -c 'import sys, json; print(json.load(sys.stdin)["processed"])')
+
+            PR_BODY="${PR_BODY}
+          - ✅ **${SUCCESSFUL}** fix(es) applied successfully
+          - ❌ **${FAILED}** fix(es) failed to apply
+          - 📊 **${PROCESSED}** total test failure(s) processed
+
+          ### Patches Applied
+          "
+
+            # List successful patches
+            cat gemini-patches/summary.json | python3 -c '
+          import sys, json
+          data = json.load(sys.stdin)
+          for patch in data.get("patches", []):
+              print(f"- `{patch[\"nodeid\"]}` → `{patch.get(\"target_file\", \"unknown\")}`")
+          ' >> /tmp/patches.txt
+
+            if [ -f "/tmp/patches.txt" ]; then
+              PR_BODY="${PR_BODY}
+          $(cat /tmp/patches.txt)"
+            fi
+
+            # List failed patches if any
+            if [ "$FAILED" -gt 0 ]; then
+              PR_BODY="${PR_BODY}
+
+          ### ⚠️ Failed Patches
+          "
+              cat gemini-patches/summary.json | python3 -c '
+          import sys, json
+          data = json.load(sys.stdin)
+          for error in data.get("errors", []):
+              print(f"- `{error[\"nodeid\"]}`: {error[\"reason\"]}")
+          ' >> /tmp/errors.txt
+
+              if [ -f "/tmp/errors.txt" ]; then
+                PR_BODY="${PR_BODY}
+          $(cat /tmp/errors.txt)"
+              fi
+            fi
+          fi
+
+          PR_BODY="${PR_BODY}
+
+          ### 📝 Next Steps
+          1. Review the changes carefully
+          2. Run tests locally to verify the fixes
+          3. Merge if everything looks good, or request changes
+
+          ### ⚙️ Workflow Details
+          - Triggered by: \`${{ github.event_name }}\`
+          - Base branch: \`${{ github.ref_name }}\`
+          - Workflow run: [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+          ---
+          🤖 Generated with [Gemini AI](https://ai.google.dev/)
+          "
+
+          # Create PR using gh CLI
+          gh pr create \
+            --title "🤖 Auto-fix: Apply Gemini-suggested fixes for failing tests" \
+            --body "${PR_BODY}" \
+            --base "${{ github.event.repository.default_branch }}" \
+            --head "${{ steps.create_branch.outputs.branch_name }}" \
+            --label "automated" \
+            --label "gemini-fix"
+
+          echo "✓ Pull request created successfully"
+
+      - name: Upload patches as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gemini-patches
+          path: gemini-patches/
+          retention-days: 7
+
+      - name: Comment on original PR (if applicable)
+        if: |
+          steps.check_changes.outputs.has_changes == 'true' &&
+          github.event.workflow_run.event == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+
+            // Try to find the original PR number
+            const payload = context.payload.workflow_run;
+            if (!payload.pull_requests || payload.pull_requests.length === 0) {
+              core.info('No PR associated with the workflow run');
+              return;
+            }
+
+            const originalPR = payload.pull_requests[0].number;
+
+            const comment = `## 🤖 Gemini Auto-Fix
+
+            I've created a new PR with automated fixes for the failing tests detected in this PR.
+
+            🔗 **Fix PR**: Check the open PRs for a PR created by Gemini Auto-Fix Bot
+
+            The fixes were generated using AI analysis of the test failures.
+            Please review the changes carefully before merging.
+            `;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: originalPR,
+              body: comment,
+            });
+
+            core.info(`Comment posted to PR #${originalPR}`);

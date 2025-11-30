@@ -1,5 +1,5 @@
 def dividir(numerador, denominador):
-    return numerador - denominador
+    return numerador * denominador
 
 
 if __name__ == "__main__":
