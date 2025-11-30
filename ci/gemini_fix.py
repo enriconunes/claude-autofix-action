@@ -25,44 +25,33 @@ from gemini_report import (
 
 FIX_PROMPT = textwrap.dedent(
     """
-    You are an automated code-repair agent. Your task is to fix Python code based on test failures.
+    You are an automated code-repair agent. Your ONLY task is to generate a valid unified diff patch.
 
-    ### IMPORTANT INSTRUCTIONS:
-    1. Analyze the failing test and the source code provided
-    2. Identify the root cause of the failure
-    3. Generate a MINIMAL fix that addresses ONLY the failing test
-    4. Output the fix as a valid unified diff format that can be applied with `git apply`
+    ### CRITICAL: OUTPUT ONLY THE DIFF
+    - Do NOT include explanations before or after the diff
+    - Do NOT include markdown code fences
+    - Do NOT include any text except the diff itself
+    - Start your response directly with "--- a/"
 
-    ### REQUIRED OUTPUT FORMAT:
-    You MUST provide your response in this exact structure:
-
-    **Root Cause:**
-    [Brief explanation of why the test failed]
-
-    **Fix Description:**
-    [Brief explanation of what the fix does]
-
-    **Diff:**
-    ```diff
+    ### REQUIRED FORMAT (example):
     --- a/path/to/file.py
     +++ b/path/to/file.py
-    @@ -line,count +line,count @@
-     context line
-    -removed line
-    +added line
-     context line
-    ```
+    @@ -10,7 +10,7 @@ def function_name():
+         context line
+         context line
+    -    return wrong_value
+    +    return correct_value
+         context line
+         context line
 
-    ### CRITICAL RULES:
-    - The diff MUST be in valid unified diff format
-    - The diff MUST use paths relative to repository root (e.g., `src/module.py` not `/full/path/to/src/module.py`)
-    - The diff MUST be minimal - only fix what's broken
-    - Do NOT include explanations inside the diff block
-    - Do NOT rewrite entire functions unless absolutely necessary
-    - Do NOT add features or refactor unrelated code
-    - The patch MUST apply cleanly with `git apply` or `patch` command
+    ### RULES:
+    1. Use paths relative to repository root (e.g., `main.py` not `/home/user/main.py`)
+    2. Include 3 lines of context before and after changes
+    3. Make MINIMAL changes - only fix the failing test
+    4. The patch must apply cleanly with `git apply`
+    5. Do NOT add comments, explanations, or any text outside the diff format
 
-    Now analyze the test failure and provide the fix.
+    Now generate ONLY the unified diff to fix the failing test.
     """
 )
 
@@ -96,35 +85,50 @@ def parse_args() -> argparse.Namespace:
 def extract_diff_from_response(response_text: str) -> Optional[str]:
     """Extract the unified diff from Gemini's response."""
 
-    # Look for diff block in markdown code fence
-    diff_pattern = r'```diff\s*\n(.*?)\n```'
+    # First, try to extract from markdown code fence
+    diff_pattern = r'```(?:diff)?\s*\n(--- .*?)\n```'
     matches = re.findall(diff_pattern, response_text, re.DOTALL | re.IGNORECASE)
 
     if matches:
-        # Return the first diff found
         return matches[0].strip()
 
-    # Fallback: look for anything that looks like a unified diff
+    # Second attempt: look for diff starting with "--- a/" or "--- "
     lines = response_text.split('\n')
     diff_lines = []
     in_diff = False
 
-    for line in lines:
-        if line.startswith('---') or line.startswith('+++'):
+    for i, line in enumerate(lines):
+        # Start capturing when we see "---" at the beginning
+        if line.startswith('---') and ('a/' in line or i + 1 < len(lines) and lines[i + 1].startswith('+++')):
             in_diff = True
+            diff_lines = [line]
+            continue
 
         if in_diff:
-            diff_lines.append(line)
+            # Continue if line looks like part of a diff
+            if (line.startswith('+++') or
+                line.startswith('@@') or
+                line.startswith('-') or
+                line.startswith('+') or
+                line.startswith(' ') or
+                line.startswith('\\') or
+                not line.strip()):  # Empty lines are OK in diffs
+                diff_lines.append(line)
+            else:
+                # Stop when we hit a line that doesn't look like diff
+                # But only if we already have some content
+                if len(diff_lines) > 3:  # Need at least ---, +++, @@, and one change
+                    break
+                else:
+                    # False start, reset
+                    in_diff = False
+                    diff_lines = []
 
-            # Stop if we hit a line that doesn't look like diff
-            if diff_lines and not any(
-                line.startswith(prefix)
-                for prefix in ['---', '+++', '@@', '-', '+', ' ', '\\']
-            ) and line.strip():
-                break
-
-    if diff_lines:
-        return '\n'.join(diff_lines).strip()
+    if diff_lines and len(diff_lines) > 3:
+        # Clean up: remove trailing empty lines
+        while diff_lines and not diff_lines[-1].strip():
+            diff_lines.pop()
+        return '\n'.join(diff_lines)
 
     return None
 
@@ -284,14 +288,21 @@ def main() -> None:
                 if text:
                     response_text += text + "\n"
 
+        # Save full response for debugging
+        debug_file = output_dir / f"{index:02d}_response.txt"
+        debug_file.write_text(response_text, encoding='utf-8')
+        print(f"  Debug: Full response saved to {debug_file}")
+
         # Extract diff
         diff = extract_diff_from_response(response_text)
 
         if not diff:
             print(f"⚠️  No valid diff found in Gemini response for {nodeid}")
+            print(f"  Check {debug_file} for the full response")
             failed_patches.append({
                 'nodeid': nodeid,
                 'reason': 'No diff in response',
+                'debug_file': str(debug_file),
             })
             continue
 
@@ -299,6 +310,8 @@ def main() -> None:
         is_valid, validation_msg = validate_diff(diff)
         if not is_valid:
             print(f"⚠️  Invalid diff format: {validation_msg}")
+            print(f"  Extracted diff preview:")
+            print("  " + "\n  ".join(diff.split('\n')[:10]))
             failed_patches.append({
                 'nodeid': nodeid,
                 'reason': f'Invalid diff: {validation_msg}',
@@ -310,6 +323,8 @@ def main() -> None:
         patch_path = output_dir / patch_filename
         patch_path.write_text(diff, encoding='utf-8')
         print(f"✓ Saved patch to: {patch_path}")
+        print(f"  Patch preview:")
+        print("  " + "\n  ".join(diff.split('\n')[:5]))
 
         # Extract target file
         target_file = extract_file_path_from_diff(diff)
