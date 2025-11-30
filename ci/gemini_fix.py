@@ -25,33 +25,25 @@ from gemini_report import (
 
 FIX_PROMPT = textwrap.dedent(
     """
-    You are an automated code-repair agent. Your ONLY task is to generate a valid unified diff patch.
+    You are an automated code-repair agent. Analyze the failing test and return ONLY the corrected Python code.
 
-    ### CRITICAL: OUTPUT ONLY THE DIFF
-    - Do NOT include explanations before or after the diff
-    - Do NOT include markdown code fences
-    - Do NOT include any text except the diff itself
-    - Start your response directly with "--- a/"
+    ### CRITICAL INSTRUCTIONS:
+    1. Return ONLY the complete corrected Python file content
+    2. Do NOT include explanations, descriptions, or markdown
+    3. Do NOT include code fences (```)
+    4. Start your response directly with the Python code
+    5. Make MINIMAL changes - only fix what's broken
+    6. Preserve all formatting, imports, and structure
 
-    ### REQUIRED FORMAT (example):
-    --- a/path/to/file.py
-    +++ b/path/to/file.py
-    @@ -10,7 +10,7 @@ def function_name():
-         context line
-         context line
-    -    return wrong_value
-    +    return correct_value
-         context line
-         context line
+    ### EXAMPLE OUTPUT:
+    def my_function(a, b):
+        return a + b
 
-    ### RULES:
-    1. Use paths relative to repository root (e.g., `main.py` not `/home/user/main.py`)
-    2. Include 3 lines of context before and after changes
-    3. Make MINIMAL changes - only fix the failing test
-    4. The patch must apply cleanly with `git apply`
-    5. Do NOT add comments, explanations, or any text outside the diff format
+    if __name__ == "__main__":
+        result = my_function(5, 3)
+        print(result)
 
-    Now generate ONLY the unified diff to fix the failing test.
+    Now analyze the failing test and return the corrected Python file.
     """
 )
 
@@ -80,6 +72,34 @@ def parse_args() -> argparse.Namespace:
         help="Maximum number of fixes to attempt (default: 5)",
     )
     return parser.parse_args()
+
+
+def extract_code_from_response(response_text: str) -> Optional[str]:
+    """Extract Python code from Gemini's response."""
+
+    # First, try to extract from markdown code fence
+    code_pattern = r'```(?:python)?\s*\n(.*?)\n```'
+    matches = re.findall(code_pattern, response_text, re.DOTALL | re.IGNORECASE)
+
+    if matches:
+        return matches[0].strip()
+
+    # If no code fence, check if the response looks like Python code
+    # (starts with common Python patterns)
+    lines = response_text.strip().split('\n')
+    if lines:
+        first_line = lines[0].strip()
+        # Check if it starts with Python-like content
+        if (first_line.startswith('def ') or
+            first_line.startswith('class ') or
+            first_line.startswith('import ') or
+            first_line.startswith('from ') or
+            first_line.startswith('#') or
+            first_line == '' and len(lines) > 1):
+            # Looks like Python code, return the whole response
+            return response_text.strip()
+
+    return None
 
 
 def extract_diff_from_response(response_text: str) -> Optional[str]:
@@ -293,68 +313,79 @@ def main() -> None:
         debug_file.write_text(response_text, encoding='utf-8')
         print(f"  Debug: Full response saved to {debug_file}")
 
-        # Extract diff
-        diff = extract_diff_from_response(response_text)
+        # Extract Python code from response
+        fixed_code = extract_code_from_response(response_text)
 
-        if not diff:
-            print(f"⚠️  No valid diff found in Gemini response for {nodeid}")
+        if not fixed_code:
+            print(f"⚠️  No valid Python code found in Gemini response for {nodeid}")
             print(f"  Check {debug_file} for the full response")
             failed_patches.append({
                 'nodeid': nodeid,
-                'reason': 'No diff in response',
+                'reason': 'No Python code in response',
                 'debug_file': str(debug_file),
             })
             continue
 
-        # Validate diff
-        is_valid, validation_msg = validate_diff(diff)
-        if not is_valid:
-            print(f"⚠️  Invalid diff format: {validation_msg}")
-            print(f"  Extracted diff preview:")
-            print("  " + "\n  ".join(diff.split('\n')[:10]))
+        # Get the source file path from the failure
+        longrepr = failure.get("longrepr")
+        reprcrash = longrepr.get("reprcrash") if isinstance(longrepr, dict) else None
+        source_path = reprcrash.get("path") if isinstance(reprcrash, dict) else None
+
+        if not source_path:
+            print(f"⚠️  Could not determine source file path for {nodeid}")
             failed_patches.append({
                 'nodeid': nodeid,
-                'reason': f'Invalid diff: {validation_msg}',
+                'reason': 'Could not determine source file path',
             })
             continue
 
-        # Save patch to file
-        patch_filename = generate_patch_filename(failure, index)
-        patch_path = output_dir / patch_filename
-        patch_path.write_text(diff, encoding='utf-8')
-        print(f"✓ Saved patch to: {patch_path}")
-        print(f"  Patch preview:")
-        print("  " + "\n  ".join(diff.split('\n')[:5]))
+        # Convert to absolute path
+        source_file = Path(source_path)
+        if not source_file.is_absolute():
+            source_file = (Path.cwd() / source_file).resolve()
 
-        # Extract target file
-        target_file = extract_file_path_from_diff(diff)
-        if target_file:
-            print(f"  Target file: {target_file}")
+        print(f"  Target file: {source_file}")
+        print(f"  Code preview:")
+        print("  " + "\n  ".join(fixed_code.split('\n')[:5]))
 
-        # Apply patch if requested
+        # Save the fixed code
+        fixed_filename = f"{index:02d}_{source_file.name}"
+        fixed_path = output_dir / fixed_filename
+        fixed_path.write_text(fixed_code, encoding='utf-8')
+        print(f"✓ Saved fixed code to: {fixed_path}")
+
+        # Apply fix if requested
         if args.apply:
-            print(f"Applying patch...")
-            success, message = apply_patch(diff, patch_path)
+            print(f"Applying fix to {source_file}...")
+            try:
+                # Backup original file
+                backup_path = source_file.with_suffix(source_file.suffix + '.backup')
+                if source_file.exists():
+                    import shutil
+                    shutil.copy2(source_file, backup_path)
+                    print(f"  Created backup: {backup_path}")
 
-            if success:
-                print(f"✓ {message}")
+                # Write the fixed code
+                source_file.write_text(fixed_code, encoding='utf-8')
+                print(f"✓ Successfully applied fix to {source_file}")
+
                 successful_patches.append({
                     'nodeid': nodeid,
-                    'patch_file': str(patch_path),
-                    'target_file': target_file,
+                    'fixed_file': str(fixed_path),
+                    'target_file': str(source_file),
                 })
-            else:
-                print(f"✗ {message}")
+            except Exception as e:
+                print(f"✗ Failed to apply fix: {e}")
                 failed_patches.append({
                     'nodeid': nodeid,
-                    'patch_file': str(patch_path),
-                    'reason': message,
+                    'fixed_file': str(fixed_path),
+                    'reason': f'Failed to write file: {e}',
                 })
         else:
             successful_patches.append({
                 'nodeid': nodeid,
-                'patch_file': str(patch_path),
-                'target_file': target_file,
+                'fixed_file': str(fixed_path),
+                'target_file': str(source_file),
             })
 
     # Summary
