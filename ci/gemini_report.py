@@ -18,8 +18,8 @@ API_BASE_URLS = (
     "https://generativelanguage.googleapis.com/v1beta/models",
     "https://generativelanguage.googleapis.com/v1/models",
 )
-DEFAULT_GEMINI_MODEL = "gemini-1.5-flash-8b"  # Free tier compatible, faster
-FALLBACK_MODELS = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-2.0-flash-exp"]
+DEFAULT_GEMINI_MODEL = "gemini-pro-latest"  # Free tier compatible
+FALLBACK_MODELS = ["gemini-pro", "gemini-1.0-pro", "gemini-1.5-flash"]
 
 BASE_PROMPT = textwrap.dedent(
     """
