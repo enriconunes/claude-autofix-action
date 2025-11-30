@@ -1,0 +1,17 @@
+{
+  "total_failures": 2,
+  "processed": 2,
+  "successful": 0,
+  "failed": 2,
+  "patches": [],
+  "errors": [
+    {
+      "nodeid": "test_dividir.py::test_dividir_ok",
+      "reason": "Gemini API error"
+    },
+    {
+      "nodeid": "test_dividir.py::test_dividir_zero_division",
+      "reason": "Gemini API error"
+    }
+  ]
+}
