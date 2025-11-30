@@ -1,0 +1,8 @@
+--- a/test_dividir.py
++++ b/test_dividir.py
+@@ -7,4 +7,4 @@
+ 
+ def test_dividir_zero_division():
+     with pytest.raises(ZeroDivisionError):
+-        pass
++        dividir(10, 0)

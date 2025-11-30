@@ -1,0 +1,19 @@
+{
+  "total_failures": 2,
+  "processed": 2,
+  "successful": 0,
+  "failed": 2,
+  "patches": [],
+  "errors": [
+    {
+      "nodeid": "test_dividir.py::test_dividir_ok",
+      "patch_file": "gemini-patches/01_test_dividir.py__test_dividir_ok.patch",
+      "reason": "Failed to apply patch:\nSTDOUT: \nSTDERR: error: corrupt patch at line 6\n"
+    },
+    {
+      "nodeid": "test_dividir.py::test_dividir_zero_division",
+      "patch_file": "gemini-patches/02_test_dividir.py__test_dividir_zero_division.patch",
+      "reason": "Failed to apply patch:\nSTDOUT: \nSTDERR: error: corrupt patch at line 8\n"
+    }
+  ]
+}
