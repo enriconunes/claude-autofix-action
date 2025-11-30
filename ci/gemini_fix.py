@@ -376,10 +376,15 @@ def main() -> None:
     summary_path.write_text(json.dumps(summary_data, indent=2), encoding='utf-8')
     print(f"\nSummary saved to: {summary_path}")
 
-    # Exit with error if no patches were successful
+    # Don't exit with error - let the workflow decide what to do
     if not successful_patches:
         print("\n⚠️  No patches were successfully generated/applied.")
-        sys.exit(1)
+        print("This may be because:")
+        print("  - The Gemini API couldn't generate valid patches")
+        print("  - The patches couldn't be applied cleanly")
+        print("  - There were API errors")
+        # Exit 0 to allow workflow to continue and check for any partial changes
+        sys.exit(0)
 
 
 if __name__ == "__main__":
