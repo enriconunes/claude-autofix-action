@@ -183,9 +183,7 @@ jobs:
             --title "🤖 Auto-fix: Apply Gemini-suggested fixes for failing tests" \
             --body "${PR_BODY}" \
             --base "${{ github.event.repository.default_branch }}" \
-            --head "${{ steps.create_branch.outputs.branch_name }}" \
-            --label "automated" \
-            --label "gemini-fix"
+            --head "${{ steps.create_branch.outputs.branch_name }}"
 
           echo "✓ Pull request created successfully"
 
