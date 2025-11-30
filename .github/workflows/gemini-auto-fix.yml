@@ -41,39 +41,53 @@ jobs:
           python -m pip install --upgrade pip
           pip install pytest pytest-json-report
 
-      - name: Download test report from previous workflow
-        if: github.event_name == 'workflow_run'
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: pytest-report
-          path: .
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Run tests to generate report (if not from workflow_run)
-        if: github.event_name == 'workflow_dispatch'
+      - name: Run tests to generate report
         continue-on-error: true
         run: |
+          echo "Running tests to generate failure report..."
           pytest --json-report || true
 
-      - name: Check if report exists
+      - name: Check if report exists and has failures
         id: check_report
         run: |
-          if [ -f ".report.json" ]; then
-            echo "report_exists=true" >> $GITHUB_OUTPUT
-            echo "✓ Test report found"
-          else
+          if [ ! -f ".report.json" ]; then
             echo "report_exists=false" >> $GITHUB_OUTPUT
-            echo "⚠️  Test report not found"
+            echo "❌ Test report not found"
+            exit 0
+          fi
+
+          echo "report_exists=true" >> $GITHUB_OUTPUT
+          echo "✓ Test report found"
+
+          # Check if there are actually failures
+          FAILURES=$(python3 -c 'import json; data=json.load(open(".report.json")); print(sum(1 for t in data.get("tests", []) if t.get("outcome") == "failed"))' 2>/dev/null || echo "0")
+          echo "failure_count=${FAILURES}" >> $GITHUB_OUTPUT
+          echo "Found ${FAILURES} test failure(s)"
+
+          if [ "$FAILURES" -eq 0 ]; then
+            echo "ℹ️  No test failures to fix"
           fi
 
       - name: Generate and apply fixes
-        if: steps.check_report.outputs.report_exists == 'true'
+        if: steps.check_report.outputs.report_exists == 'true' && steps.check_report.outputs.failure_count != '0'
         env:
           GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
+        continue-on-error: true
         run: |
-          python ci/gemini_fix.py --report .report.json --apply --max-fixes 5
+          echo "Generating fixes with Gemini..."
+          python ci/gemini_fix.py --report .report.json --apply --max-fixes 5 || {
+            echo "⚠️  gemini_fix.py exited with error, but continuing to check for changes"
+            exit 0
+          }
+
+      - name: Check patches directory
+        run: |
+          if [ -d "gemini-patches" ]; then
+            echo "✓ gemini-patches directory exists"
+            ls -la gemini-patches/
+          else
+            echo "⚠️  gemini-patches directory not found"
+          fi
 
       - name: Check for changes
         id: check_changes
@@ -226,10 +240,12 @@ jobs:
       - name: Upload patches as artifact
         if: always()
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: gemini-patches
           path: gemini-patches/
           retention-days: 7
+          if-no-files-found: warn
 
       - name: Comment on original PR (if applicable)
         if: |

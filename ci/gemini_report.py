@@ -364,7 +364,7 @@ def send_to_gemini(api_key: str, payload: Dict[str, Any], model_name: str) -> Di
         )
 
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
+            with urllib.request.urlopen(request, timeout=120) as response:
                 return json.load(response)
         except urllib.error.HTTPError as exc:
             error_detail = exc.read().decode("utf-8", errors="replace")
@@ -396,7 +396,7 @@ def send_to_gemini(api_key: str, payload: Dict[str, Any], model_name: str) -> Di
                 method="POST",
             )
             try:
-                with urllib.request.urlopen(request, timeout=60) as response:
+                with urllib.request.urlopen(request, timeout=120) as response:
                     return json.load(response)
             except urllib.error.HTTPError as exc:
                 error_detail = exc.read().decode("utf-8", errors="replace")
