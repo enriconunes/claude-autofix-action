@@ -127,8 +127,8 @@ jobs:
 
           This PR was automatically created by the Gemini Auto-Fix workflow.
 
-          The following changes were applied to fix failing tests:
-          $(cat gemini-patches/summary.json | python3 -c 'import sys, json; data=json.load(sys.stdin); print(f\"- {data[\"successful\"]} patch(es) applied successfully\"); print(f\"- {data[\"failed\"]} patch(es) failed to apply\") if data[\"failed\"] > 0 else None')
+          Gemini AI analyzed failing tests and generated patches to fix them.
+          Check the PR description for details about which patches were applied.
 
           🤖 Generated with Gemini AI
           "
@@ -140,15 +140,6 @@ jobs:
         run: |
           git push origin ${{ steps.create_branch.outputs.branch_name }}
           echo "✓ Branch pushed to remote"
-
-      - name: Read patch summary
-        if: steps.check_changes.outputs.has_changes == 'true'
-        id: read_summary
-        run: |
-          if [ -f "gemini-patches/summary.json" ]; then
-            SUMMARY=$(cat gemini-patches/summary.json)
-            echo "summary=${SUMMARY}" >> $GITHUB_OUTPUT
-          fi
 
       - name: Create Pull Request
         if: steps.check_changes.outputs.has_changes == 'true'
@@ -163,51 +154,12 @@ jobs:
           ### Summary
           "
 
-          # Add patch details from summary
+          # Add patch details from summary (simplified)
           if [ -f "gemini-patches/summary.json" ]; then
-            SUCCESSFUL=$(cat gemini-patches/summary.json | python3 -c 'import sys, json; print(json.load(sys.stdin)["successful"])')
-            FAILED=$(cat gemini-patches/summary.json | python3 -c 'import sys, json; print(json.load(sys.stdin)["failed"])')
-            PROCESSED=$(cat gemini-patches/summary.json | python3 -c 'import sys, json; print(json.load(sys.stdin)["processed"])')
-
             PR_BODY="${PR_BODY}
-          - ✅ **${SUCCESSFUL}** fix(es) applied successfully
-          - ❌ **${FAILED}** fix(es) failed to apply
-          - 📊 **${PROCESSED}** total test failure(s) processed
+          See the gemini-patches artifact for details about which patches were generated.
 
-          ### Patches Applied
           "
-
-            # List successful patches
-            cat gemini-patches/summary.json | python3 -c '
-          import sys, json
-          data = json.load(sys.stdin)
-          for patch in data.get("patches", []):
-              print(f"- `{patch[\"nodeid\"]}` → `{patch.get(\"target_file\", \"unknown\")}`")
-          ' >> /tmp/patches.txt
-
-            if [ -f "/tmp/patches.txt" ]; then
-              PR_BODY="${PR_BODY}
-          $(cat /tmp/patches.txt)"
-            fi
-
-            # List failed patches if any
-            if [ "$FAILED" -gt 0 ]; then
-              PR_BODY="${PR_BODY}
-
-          ### ⚠️ Failed Patches
-          "
-              cat gemini-patches/summary.json | python3 -c '
-          import sys, json
-          data = json.load(sys.stdin)
-          for error in data.get("errors", []):
-              print(f"- `{error[\"nodeid\"]}`: {error[\"reason\"]}")
-          ' >> /tmp/errors.txt
-
-              if [ -f "/tmp/errors.txt" ]; then
-                PR_BODY="${PR_BODY}
-          $(cat /tmp/errors.txt)"
-              fi
-            fi
           fi
 
           PR_BODY="${PR_BODY}
