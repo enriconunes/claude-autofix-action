@@ -1,0 +1,28 @@
+import math
+import operator
+from functools import reduce
+
+def calcula_area(raio):
+    if raio < 0:
+        raise ValueError("O raio não pode ser negativo")
+    return math.pi * raio ** 2
+
+def concatena_listas(lista1, lista2):
+    return lista1 + lista2
+
+def dividir(a, b):
+    return a / b
+
+def inverter_texto(texto):
+    return texto[::-1]
+
+def media(lista):
+    return sum(lista) / len(lista)
+
+def multiplicar_lista(lista):
+    if not lista:
+        return 1
+    return reduce(operator.mul, lista)
+
+def soma_lista(lista):
+    return sum(lista)
