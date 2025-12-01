@@ -1,0 +1,49 @@
+import math
+
+def calcula_area(raio):
+    if not isinstance(raio, (int, float)):
+        raise TypeError("O raio deve ser um número.")
+    if raio < 0:
+        raise ValueError("O raio não pode ser negativo.")
+    return math.pi * (raio ** 2)
+
+def concatena_listas(lista1, lista2):
+    if not isinstance(lista1, list) or not isinstance(lista2, list):
+        raise TypeError("Ambos os argumentos devem ser listas.")
+    return lista1 + lista2
+
+def dividir(a, b):
+    return a / b
+
+def inverter_texto(texto):
+    if not isinstance(texto, str):
+        raise TypeError("O argumento deve ser do tipo string.")
+    return texto[::-1]
+
+def media(lista):
+    if not isinstance(lista, list):
+        raise TypeError("O argumento deve ser uma lista.")
+    if not lista:
+        raise ZeroDivisionError("A lista não pode estar vazia.")
+    return sum(lista) / len(lista)
+
+def multiplicar_lista(lista):
+    if not isinstance(lista, list):
+        raise TypeError("O argumento deve ser uma lista.")
+    if not lista:
+        return 1
+    
+    produto = 1
+    for item in lista:
+        if not isinstance(item, (int, float)):
+            raise TypeError("A lista deve conter apenas números.")
+        produto *= item
+    return produto
+
+def soma_lista(lista):
+    if not isinstance(lista, list):
+        raise TypeError("O argumento deve ser uma lista.")
+    for item in lista:
+        if not isinstance(item, (int, float)):
+            raise TypeError("A lista deve conter apenas números.")
+    return sum(lista)
