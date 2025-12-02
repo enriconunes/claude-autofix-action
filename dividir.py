@@ -1,7 +1,7 @@
 def dividir(numerador, denominador):
     if denominador == 0:
         raise ZeroDivisionError("division by zero")
-    return numerador * denominador
+    return numerador / denominador
 
 
 
