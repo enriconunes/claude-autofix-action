@@ -327,9 +327,40 @@ def main() -> None:
             continue
 
         # Get the source file path from the failure
-        longrepr = failure.get("longrepr")
-        reprcrash = longrepr.get("reprcrash") if isinstance(longrepr, dict) else None
-        source_path = reprcrash.get("path") if isinstance(reprcrash, dict) else None
+        # Try to find the actual module being tested (not the test file)
+        source_path = None
+
+        # First, check if we can infer from nodeid
+        # nodeid format: "test_module.py::test_function"
+        nodeid_parts = nodeid.split("::")
+        if nodeid_parts:
+            test_file = nodeid_parts[0]
+            # If it's a test file like "test_dividir.py", try to find "dividir.py"
+            if test_file.startswith("test_") and test_file.endswith(".py"):
+                potential_source = test_file.replace("test_", "", 1)
+                potential_path = Path(potential_source)
+                if potential_path.exists():
+                    source_path = str(potential_path)
+                    print(f"  Inferred source file from test name: {source_path}")
+
+        # Fallback: try to extract from longrepr
+        if not source_path:
+            longrepr = failure.get("longrepr")
+            reprcrash = longrepr.get("reprcrash") if isinstance(longrepr, dict) else None
+            fallback_path = reprcrash.get("path") if isinstance(reprcrash, dict) else None
+
+            # If fallback is a test file, try to find the actual module
+            if fallback_path and "test_" in fallback_path:
+                fallback_file = Path(fallback_path).name
+                if fallback_file.startswith("test_"):
+                    potential_source = fallback_file.replace("test_", "", 1)
+                    potential_path = Path(fallback_path).parent / potential_source
+                    if potential_path.exists():
+                        source_path = str(potential_path)
+                        print(f"  Inferred source file from test path: {source_path}")
+
+            if not source_path:
+                source_path = fallback_path
 
         if not source_path:
             print(f"⚠️  Could not determine source file path for {nodeid}")
@@ -401,7 +432,7 @@ def main() -> None:
         for patch in successful_patches:
             print(f"  - {patch['nodeid']}")
             print(f"    File: {patch.get('target_file', 'unknown')}")
-            print(f"    Patch: {patch['patch_file']}")
+            print(f"    Patch: {patch['fixed_file']}")
 
     if failed_patches:
         print("\n✗ Failed patches:")
