@@ -338,10 +338,18 @@ def main() -> None:
             # If it's a test file like "test_dividir.py", try to find "dividir.py"
             if test_file.startswith("test_") and test_file.endswith(".py"):
                 potential_source = test_file.replace("test_", "", 1)
-                potential_path = Path(potential_source)
-                if potential_path.exists():
-                    source_path = str(potential_path)
-                    print(f"  Inferred source file from test name: {source_path}")
+
+                # Try multiple locations for the source file
+                search_paths = [
+                    Path(potential_source),  # Same directory
+                    Path.cwd() / potential_source,  # From working directory
+                ]
+
+                for search_path in search_paths:
+                    if search_path.exists() and search_path.is_file():
+                        source_path = str(search_path)
+                        print(f"  Inferred source file from test name: {source_path}")
+                        break
 
         # Fallback: try to extract from longrepr
         if not source_path:
@@ -354,16 +362,28 @@ def main() -> None:
                 fallback_file = Path(fallback_path).name
                 if fallback_file.startswith("test_"):
                     potential_source = fallback_file.replace("test_", "", 1)
-                    potential_path = Path(fallback_path).parent / potential_source
-                    if potential_path.exists():
-                        source_path = str(potential_path)
-                        print(f"  Inferred source file from test path: {source_path}")
+                    fallback_dir = Path(fallback_path).parent
+
+                    # Try multiple locations
+                    search_paths = [
+                        fallback_dir / potential_source,
+                        Path(potential_source),
+                        Path.cwd() / potential_source,
+                    ]
+
+                    for search_path in search_paths:
+                        if search_path.exists() and search_path.is_file():
+                            source_path = str(search_path)
+                            print(f"  Inferred source file from test path: {source_path}")
+                            break
 
             if not source_path:
                 source_path = fallback_path
 
         if not source_path:
             print(f"⚠️  Could not determine source file path for {nodeid}")
+            print(f"  Debug - nodeid: {nodeid}")
+            print(f"  Debug - working directory: {Path.cwd()}")
             failed_patches.append({
                 'nodeid': nodeid,
                 'reason': 'Could not determine source file path',
