@@ -488,14 +488,7 @@ def main() -> None:
         if args.apply:
             print(f"Applying fix to {source_file}...")
             try:
-                # Backup original file
-                backup_path = source_file.with_suffix(source_file.suffix + '.backup')
-                if source_file.exists():
-                    import shutil
-                    shutil.copy2(source_file, backup_path)
-                    print(f"  Created backup: {backup_path}")
-
-                # Write the fixed code
+                # Write the fixed code directly (no backup needed - git handles versioning)
                 source_file.write_text(fixed_code, encoding='utf-8')
                 print(f"✓ Successfully applied fix to {source_file}")
 
