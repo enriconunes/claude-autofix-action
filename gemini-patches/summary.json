@@ -1,17 +1,12 @@
 {
-  "total_failures": 2,
-  "processed": 2,
-  "successful": 2,
+  "total_failures": 1,
+  "processed": 1,
+  "successful": 1,
   "failed": 0,
   "patches": [
     {
       "nodeid": "test_dividir.py::test_dividir_ok",
       "fixed_file": "gemini-patches/01_dividir.py",
-      "target_file": "/home/runner/work/prototipo/prototipo/dividir.py"
-    },
-    {
-      "nodeid": "test_dividir.py::test_dividir_zero_division",
-      "fixed_file": "gemini-patches/02_dividir.py",
       "target_file": "/home/runner/work/prototipo/prototipo/dividir.py"
     }
   ],
