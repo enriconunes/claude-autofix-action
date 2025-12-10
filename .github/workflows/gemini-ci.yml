@@ -1,9 +1,8 @@
 name: Gemini Assisted CI
 
 on:
-  push:
-    branches: [ main ]
   pull_request:
+    branches: [ main ]
 
 permissions:
   contents: read
@@ -69,6 +68,14 @@ jobs:
               body,
             });
             core.info('Gemini analysis comment posted to PR.');
+
+      - name: Upload test report as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-report
+          path: .report.json
+          retention-days: 7
 
       - name: Fail if tests failed
         if: steps.tests.outcome == 'failure'
