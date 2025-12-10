@@ -3,7 +3,6 @@ def calcula_area_retangulo(largura, altura):
         raise ValueError("Dimensões negativas")
     return largura - altura
 
-
 if __name__ == "__main__":
     largura = 10
     altura = 5
