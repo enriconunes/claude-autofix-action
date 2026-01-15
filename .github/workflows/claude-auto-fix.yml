@@ -161,6 +161,7 @@ jobs:
 
       - name: Create Pull Request
         if: steps.check_changes.outputs.has_changes == 'true'
+        id: create_pr
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -197,15 +198,16 @@ jobs:
           🤖 Generated with [Claude AI](https://www.anthropic.com/claude)
           "
 
-          # Create PR using gh CLI
+          # Create PR using gh CLI and capture the URL
           # Use the source branch (the one that failed) as the base
-          gh pr create \
+          PR_URL=$(gh pr create \
             --title "🤖 Auto-fix: Apply Claude-suggested fixes for failing tests" \
             --body "${PR_BODY}" \
             --base "${{ steps.get_branch.outputs.source_branch }}" \
-            --head "${{ steps.create_branch.outputs.branch_name }}"
+            --head "${{ steps.create_branch.outputs.branch_name }}")
 
-          echo "✓ Pull request created successfully"
+          echo "pr_url=${PR_URL}" >> $GITHUB_OUTPUT
+          echo "✓ Pull request created successfully: ${PR_URL}"
 
       - name: Upload patches as artifact
         if: always()
@@ -222,6 +224,8 @@ jobs:
           steps.check_changes.outputs.has_changes == 'true' &&
           github.event.workflow_run.event == 'pull_request'
         uses: actions/github-script@v7
+        env:
+          FIX_PR_URL: ${{ steps.create_pr.outputs.pr_url }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -235,12 +239,13 @@ jobs:
             }
 
             const originalPR = payload.pull_requests[0].number;
+            const fixPrUrl = process.env.FIX_PR_URL;
 
             const comment = `## 🤖 Claude Auto-Fix
 
             I've created a new PR with automated fixes for the failing tests detected in this PR.
 
-            🔗 **Fix PR**: Check the open PRs for a PR created by Claude Auto-Fix Bot
+            🔗 **Fix PR**: ${fixPrUrl}
 
             The fixes were generated using AI analysis of the test failures.
             Please review the changes carefully before merging.
