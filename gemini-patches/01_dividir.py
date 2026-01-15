@@ -3,6 +3,8 @@ def dividir(numerador, denominador):
         raise ZeroDivisionError("division by zero")
     return numerador / denominador
 
+
+
 if __name__ == "__main__":
     resultado = dividir(10, 2)
     print("Resultado:", resultado)

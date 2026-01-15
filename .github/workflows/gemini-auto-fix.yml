@@ -25,9 +25,27 @@ jobs:
       (github.event.workflow_run.conclusion == 'failure')
 
     steps:
+      - name: Get source branch from failed workflow
+        id: get_branch
+        run: |
+          # Try to get the branch from the workflow_run event
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            # Get the head branch from the workflow run
+            HEAD_BRANCH="${{ github.event.workflow_run.head_branch }}"
+            echo "source_branch=${HEAD_BRANCH}" >> $GITHUB_OUTPUT
+            echo "Found source branch: ${HEAD_BRANCH}"
+          else
+            # For manual dispatch, use current branch
+            HEAD_BRANCH="${{ github.ref_name }}"
+            echo "source_branch=${HEAD_BRANCH}" >> $GITHUB_OUTPUT
+            echo "Using current branch: ${HEAD_BRANCH}"
+          fi
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          # Checkout the source branch (the one that failed)
+          ref: ${{ steps.get_branch.outputs.source_branch }}
           # Need to fetch full history for git operations
           fetch-depth: 0
 
@@ -171,7 +189,8 @@ jobs:
 
           ### ⚙️ Workflow Details
           - Triggered by: \`${{ github.event_name }}\`
-          - Base branch: \`${{ github.ref_name }}\`
+          - Source branch: \`${{ steps.get_branch.outputs.source_branch }}\`
+          - Target branch: \`${{ steps.get_branch.outputs.source_branch }}\` (will merge into the original failing branch)
           - Workflow run: [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
           ---
@@ -179,10 +198,11 @@ jobs:
           "
 
           # Create PR using gh CLI
+          # Use the source branch (the one that failed) as the base
           gh pr create \
             --title "🤖 Auto-fix: Apply Gemini-suggested fixes for failing tests" \
             --body "${PR_BODY}" \
-            --base "${{ github.event.repository.default_branch }}" \
+            --base "${{ steps.get_branch.outputs.source_branch }}" \
             --head "${{ steps.create_branch.outputs.branch_name }}"
 
           echo "✓ Pull request created successfully"

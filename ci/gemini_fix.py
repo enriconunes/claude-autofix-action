@@ -33,9 +33,26 @@ FIX_PROMPT = textwrap.dedent(
     3. Do NOT include code fences (```)
     4. Start your response directly with the Python code
     5. Make MINIMAL changes - only fix what's broken
-    6. Preserve all formatting, imports, and structure
+    6. PRESERVE ALL CODE - including if __name__ == "__main__" blocks, imports, comments, and everything else
+    7. Do NOT remove or simplify any part of the original code
+    8. Do NOT change variable names, function names, or parameter names
+    9. Do NOT refactor or improve code that is not related to the bug
+    10. Only change the EXACT line(s) that have the bug - nothing else
+    11. If the bug is a wrong operator (like - instead of /), ONLY change that operator
+    12. Keep absolutely everything else identical to the original file
 
-    ### EXAMPLE OUTPUT:
+    ### EXAMPLE:
+    If the original file is:
+    ```
+    def my_function(a, b):
+        return a - b  # BUG: should be addition
+
+    if __name__ == "__main__":
+        result = my_function(5, 3)
+        print(result)
+    ```
+
+    Your output should be EXACTLY:
     def my_function(a, b):
         return a + b
 
@@ -43,7 +60,15 @@ FIX_PROMPT = textwrap.dedent(
         result = my_function(5, 3)
         print(result)
 
-    Now analyze the failing test and return the corrected Python file.
+    WRONG output (do NOT do this):
+    def my_function(x, y):  # Changed parameter names - WRONG!
+        return x + y
+
+    WRONG output (do NOT do this):
+    def my_function(a, b):
+        return a + b  # Removed if __name__ block - WRONG!
+
+    Now analyze the failing test and return the COMPLETE corrected Python file with ALL original code preserved and ONLY the bug fixed.
     """
 )
 
@@ -221,18 +246,70 @@ def apply_patch(patch_content: str, patch_file: Path) -> Tuple[bool, str]:
         return False, f"Error applying patch: {e}"
 
 
-def build_fix_payload(failure: Dict[str, Any], report: Dict[str, Any], index: int) -> Dict[str, Any]:
-    """Build a payload specifically for requesting fixes."""
+def build_fix_payload(failure: Dict[str, Any], report: Dict[str, Any], index: int, source_file_path: Optional[str] = None) -> Dict[str, Any]:
+    """Build a payload specifically for requesting fixes.
 
-    # Reuse the base payload builder
-    base_payload = build_payload(failure, report, index)
+    Args:
+        failure: The test failure information
+        report: The full pytest report
+        index: The failure index
+        source_file_path: Optional path to the actual source file (not test file) to fix
+    """
 
-    # Replace the prompt with fix-focused prompt
-    base_payload['contents'][0]['parts'][0]['text'] = (
-        FIX_PROMPT + "\n\n" + base_payload['contents'][0]['parts'][0]['text']
-    )
+    # If we have a specific source file path, read it and include it
+    if source_file_path:
+        from gemini_report import read_source, format_longrepr
 
-    return base_payload
+        source_code = read_source(source_file_path)
+        longrepr = failure.get("longrepr")
+        traceback_text = format_longrepr(longrepr)
+        failure_json = json.dumps(failure, indent=2, ensure_ascii=False)
+
+        # Build a custom prompt with the correct source file
+        body = textwrap.dedent(
+            f"""
+            {FIX_PROMPT}
+
+            ### Failing Test #{index}
+            - **Node ID:** {failure.get('nodeid', 'unknown')}
+            - **Test Outcome:** {failure.get('outcome')}
+            - **Source File to Fix:** {source_file_path}
+
+            ### Python Source Code (ORIGINAL FILE - PRESERVE ALL CODE)
+            ```python
+            {source_code}
+            ```
+
+            ### Test Failure Information
+            ```json
+            {failure_json}
+            ```
+
+            ### Traceback and Error Messages
+            ```
+            {traceback_text}
+            ```
+
+            Remember: Return the COMPLETE file with ALL original code preserved, only fixing the bug.
+            """
+        ).strip()
+
+        return {
+            "contents": [
+                {
+                    "parts": [
+                        {"text": body}
+                    ]
+                }
+            ]
+        }
+    else:
+        # Fallback to original behavior
+        base_payload = build_payload(failure, report, index)
+        base_payload['contents'][0]['parts'][0]['text'] = (
+            FIX_PROMPT + "\n\n" + base_payload['contents'][0]['parts'][0]['text']
+        )
+        return base_payload
 
 
 def generate_patch_filename(failure: Dict[str, Any], index: int) -> str:
@@ -284,8 +361,80 @@ def main() -> None:
         print(f"Processing failure {index}/{len(failures_to_fix)}: {nodeid}")
         print('='*60)
 
-        # Get fix from Gemini
-        payload = build_fix_payload(failure, report, index)
+        # Get the source file path from the failure FIRST
+        # This needs to happen before build_fix_payload so we can pass the correct file
+        # Try to find the actual module being tested (not the test file)
+        source_path = None
+
+        # First, check if we can infer from nodeid
+        # nodeid format: "test_module.py::test_function"
+        nodeid_parts = nodeid.split("::")
+        if nodeid_parts:
+            test_file = nodeid_parts[0]
+            # If it's a test file like "test_dividir.py", try to find "dividir.py"
+            if test_file.startswith("test_") and test_file.endswith(".py"):
+                potential_source = test_file.replace("test_", "", 1)
+
+                # Try multiple locations for the source file
+                search_paths = [
+                    Path(potential_source),  # Same directory
+                    Path.cwd() / potential_source,  # From working directory
+                ]
+
+                for search_path in search_paths:
+                    if search_path.exists() and search_path.is_file():
+                        source_path = str(search_path)
+                        print(f"  Inferred source file from test name: {source_path}")
+                        break
+
+        # Fallback: try to extract from longrepr
+        if not source_path:
+            longrepr = failure.get("longrepr")
+            reprcrash = longrepr.get("reprcrash") if isinstance(longrepr, dict) else None
+            fallback_path = reprcrash.get("path") if isinstance(reprcrash, dict) else None
+
+            # If fallback is a test file, try to find the actual module
+            if fallback_path and "test_" in fallback_path:
+                fallback_file = Path(fallback_path).name
+                if fallback_file.startswith("test_"):
+                    potential_source = fallback_file.replace("test_", "", 1)
+                    fallback_dir = Path(fallback_path).parent
+
+                    # Try multiple locations
+                    search_paths = [
+                        fallback_dir / potential_source,
+                        Path(potential_source),
+                        Path.cwd() / potential_source,
+                    ]
+
+                    for search_path in search_paths:
+                        if search_path.exists() and search_path.is_file():
+                            source_path = str(search_path)
+                            print(f"  Inferred source file from test path: {source_path}")
+                            break
+
+            if not source_path:
+                source_path = fallback_path
+
+        if not source_path:
+            print(f"⚠️  Could not determine source file path for {nodeid}")
+            print(f"  Debug - nodeid: {nodeid}")
+            print(f"  Debug - working directory: {Path.cwd()}")
+            failed_patches.append({
+                'nodeid': nodeid,
+                'reason': 'Could not determine source file path',
+            })
+            continue
+
+        # Convert to absolute path
+        source_file = Path(source_path)
+        if not source_file.is_absolute():
+            source_file = (Path.cwd() / source_file).resolve()
+
+        print(f"  Target file: {source_file}")
+
+        # Now get fix from Gemini with the correct source file
+        payload = build_fix_payload(failure, report, index, source_file_path=str(source_file))
         print(f"Requesting fix from Gemini...")
 
         try:
@@ -326,25 +475,6 @@ def main() -> None:
             })
             continue
 
-        # Get the source file path from the failure
-        longrepr = failure.get("longrepr")
-        reprcrash = longrepr.get("reprcrash") if isinstance(longrepr, dict) else None
-        source_path = reprcrash.get("path") if isinstance(reprcrash, dict) else None
-
-        if not source_path:
-            print(f"⚠️  Could not determine source file path for {nodeid}")
-            failed_patches.append({
-                'nodeid': nodeid,
-                'reason': 'Could not determine source file path',
-            })
-            continue
-
-        # Convert to absolute path
-        source_file = Path(source_path)
-        if not source_file.is_absolute():
-            source_file = (Path.cwd() / source_file).resolve()
-
-        print(f"  Target file: {source_file}")
         print(f"  Code preview:")
         print("  " + "\n  ".join(fixed_code.split('\n')[:5]))
 
@@ -358,14 +488,7 @@ def main() -> None:
         if args.apply:
             print(f"Applying fix to {source_file}...")
             try:
-                # Backup original file
-                backup_path = source_file.with_suffix(source_file.suffix + '.backup')
-                if source_file.exists():
-                    import shutil
-                    shutil.copy2(source_file, backup_path)
-                    print(f"  Created backup: {backup_path}")
-
-                # Write the fixed code
+                # Write the fixed code directly (no backup needed - git handles versioning)
                 source_file.write_text(fixed_code, encoding='utf-8')
                 print(f"✓ Successfully applied fix to {source_file}")
 
@@ -401,7 +524,7 @@ def main() -> None:
         for patch in successful_patches:
             print(f"  - {patch['nodeid']}")
             print(f"    File: {patch.get('target_file', 'unknown')}")
-            print(f"    Patch: {patch['patch_file']}")
+            print(f"    Patch: {patch['fixed_file']}")
 
     if failed_patches:
         print("\n✗ Failed patches:")
