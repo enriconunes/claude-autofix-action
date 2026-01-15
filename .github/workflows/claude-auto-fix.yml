@@ -137,8 +137,8 @@ jobs:
           # Create and switch to new branch
           git checkout -b "${BRANCH_NAME}"
 
-          # Add all changes
-          git add .
+          # Add only modified tracked files (excludes new files like .report.json, claude-patches/, etc)
+          git add -u
 
           # Create commit with details
           git commit -m "fix: Apply Claude-suggested fixes for failing tests

@@ -110,3 +110,11 @@ Desktop.ini
 #  Node (caso seja um projeto combinado)
 # ==========================================
 node_modules/
+
+# ==========================================
+#  Arquivos temporários do Claude CI
+# ==========================================
+.report.json
+claude_comment.md
+claude-patches/
+gemini-patches/
