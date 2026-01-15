@@ -1,14 +1,13 @@
 {
   "total_failures": 1,
   "processed": 1,
-  "successful": 1,
-  "failed": 0,
-  "patches": [
+  "successful": 0,
+  "failed": 1,
+  "patches": [],
+  "errors": [
     {
-      "nodeid": "test_dividir.py::test_dividir_ok",
-      "fixed_file": "gemini-patches/01_dividir.py",
-      "target_file": "/home/runner/work/prototipo/prototipo/dividir.py"
+      "nodeid": "test_calcula_area.py::test_calcula_area_ok",
+      "reason": "Gemini API error"
     }
-  ],
-  "errors": []
+  ]
 }
