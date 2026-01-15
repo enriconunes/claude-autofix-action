@@ -29,6 +29,155 @@ This repository implements **AI-powered automated test fixing** using Claude AI 
    - Comments on original PR with link to fix PR
 ```
 
+### Execution Flow Diagrams
+
+#### GitHub Action: `claude-ci.yml` → Test Analysis
+
+```
+.github/workflows/claude-ci.yml
+    │
+    ├─ Runs: pytest --json-report
+    │         └─ Generates: .report.json
+    │
+    └─ Executes: ci/claude_report.py
+                    │
+                    ├─ Imports: api/
+                    │           ├─ client.py
+                    │           │   └─ Calls: Claude API (Anthropic)
+                    │           └─ models.py
+                    │               └─ Resolves: Claude model name
+                    │
+                    ├─ Imports: pytest/
+                    │           ├─ parser.py
+                    │           │   └─ Loads: .report.json
+                    │           │   └─ Extracts: test failures
+                    │           └─ formatter.py
+                    │               └─ Formats: tracebacks, responses
+                    │
+                    ├─ Imports: file_utils.py
+                    │           └─ Reads: source files
+                    │
+                    ├─ Imports: config.py
+                    │           └─ Provides: BASE_ANALYSIS_PROMPT
+                    │
+                    └─ Generates: claude_comment.md
+                                  └─ Posted to PR as comment
+```
+
+#### GitHub Action: `claude-auto-fix.yml` → Automated Fix Generation
+
+```
+.github/workflows/claude-auto-fix.yml
+    │
+    ├─ Runs: pytest --json-report
+    │         └─ Generates: .report.json
+    │
+    └─ Executes: ci/claude_fix.py
+                    │
+                    ├─ Imports: api/
+                    │           ├─ client.py
+                    │           │   └─ Calls: Claude API (Anthropic)
+                    │           └─ models.py
+                    │               └─ Resolves: Claude model name
+                    │
+                    ├─ Imports: pytest/
+                    │           ├─ parser.py
+                    │           │   └─ Loads: .report.json
+                    │           │   └─ Extracts: test failures
+                    │           └─ formatter.py
+                    │               └─ Formats: tracebacks
+                    │
+                    ├─ Imports: fix/
+                    │           ├─ inference.py
+                    │           │   └─ Infers: test_X.py → X.py
+                    │           ├─ extractor.py
+                    │           │   └─ Extracts: Python code from response
+                    │           └─ patcher.py
+                    │               └─ Validates/applies: patches
+                    │
+                    ├─ Imports: file_utils.py
+                    │           └─ Reads: source files
+                    │
+                    ├─ Imports: config.py
+                    │           └─ Provides: FIX_PROMPT
+                    │
+                    ├─ Generates: claude-patches/
+                    │             ├─ 01_response.txt (debug)
+                    │             ├─ 01_<filename>.py (fixed code)
+                    │             └─ summary.json
+                    │
+                    └─ Modifies: source files (with --apply flag)
+                                 └─ Creates: fix branch + PR
+```
+
+### Python Module Structure
+
+```
+ci/
+├─ claude_report.py (Entry point for analysis)
+│  └─ Dependencies:
+│     ├─ api.client → send_to_claude()
+│     ├─ api.models → resolve_model_name()
+│     ├─ pytest.parser → load_report(), extract_failures()
+│     ├─ pytest.formatter → format_longrepr(), extract_response_text()
+│     ├─ file_utils → read_source()
+│     └─ config → BASE_ANALYSIS_PROMPT
+│
+├─ claude_fix.py (Entry point for auto-fix)
+│  └─ Dependencies:
+│     ├─ api.client → send_to_claude()
+│     ├─ api.models → resolve_model_name()
+│     ├─ pytest.parser → load_report(), extract_failures()
+│     ├─ pytest.formatter → format_longrepr()
+│     ├─ fix.inference → infer_source_file()
+│     ├─ fix.extractor → extract_code_from_response()
+│     ├─ file_utils → read_source()
+│     └─ config → FIX_PROMPT
+│
+├─ api/
+│  ├─ client.py
+│  │  ├─ send_to_claude() → Makes HTTP request to Claude API
+│  │  ├─ send_health_check() → Verifies API connectivity
+│  │  └─ Dependencies: config (API_BASE_URL, ANTHROPIC_VERSION)
+│  │
+│  └─ models.py
+│     ├─ resolve_model_name() → Gets model from env or default
+│     └─ iter_candidate_models() → Provides fallback models
+│
+├─ pytest/
+│  ├─ parser.py
+│  │  ├─ load_report() → Loads .report.json
+│  │  └─ extract_failures() → Filters failed tests
+│  │
+│  └─ formatter.py
+│     ├─ format_longrepr() → Formats pytest tracebacks
+│     ├─ extract_response_text() → Parses Claude response
+│     └─ build_comment_section() → Builds PR comment
+│
+├─ fix/
+│  ├─ inference.py
+│  │  └─ infer_source_file() → test_X.py → X.py mapping
+│  │
+│  ├─ extractor.py
+│  │  ├─ extract_code_from_response() → Extracts Python from Claude
+│  │  ├─ extract_diff_from_response() → Extracts unified diff
+│  │  └─ extract_file_path_from_diff() → Gets target file
+│  │
+│  └─ patcher.py
+│     ├─ validate_diff() → Checks diff format
+│     ├─ apply_patch() → Applies using git apply
+│     └─ generate_patch_filename() → Creates patch filename
+│
+├─ file_utils.py
+│  └─ read_source() → Reads source files with encoding fallback
+│
+└─ config.py
+   ├─ API_BASE_URL, ANTHROPIC_VERSION
+   ├─ DEFAULT_CLAUDE_MODEL, FALLBACK_MODELS
+   ├─ BASE_ANALYSIS_PROMPT → For claude_report.py
+   └─ FIX_PROMPT → For claude_fix.py
+```
+
 ### Core Components
 
 #### 1. GitHub Actions Workflows (`.github/workflows/`)
