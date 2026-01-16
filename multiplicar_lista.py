@@ -1,7 +1,7 @@
 def multiplicar_lista(numeros):
     resultado = 1
     for n in numeros:
-        resultado *= n
+        resultado += n
     return resultado
 
 
