@@ -11,6 +11,9 @@ import textwrap
 from pathlib import Path
 from typing import Any, Dict, List
 
+# Add ci directory to path to enable imports
+sys.path.insert(0, str(Path(__file__).parent))
+
 from api import send_to_claude, send_health_check, resolve_model_name
 from config import BASE_ANALYSIS_PROMPT
 from file_utils import read_source

@@ -7,10 +7,16 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ..config import API_BASE_URL, ANTHROPIC_VERSION, DEFAULT_CLAUDE_MODEL
-from .models import iter_candidate_models, resolve_model_name
+# Handle both relative and absolute imports
+try:
+    from ..config import API_BASE_URL, ANTHROPIC_VERSION, DEFAULT_CLAUDE_MODEL
+    from .models import iter_candidate_models, resolve_model_name
+except ImportError:
+    from config import API_BASE_URL, ANTHROPIC_VERSION, DEFAULT_CLAUDE_MODEL
+    from api.models import iter_candidate_models, resolve_model_name
 
 
 def send_to_claude(api_key: str, payload: Dict[str, Any]) -> Dict[str, Any]:

@@ -5,7 +5,11 @@ from __future__ import annotations
 import os
 from typing import Iterator
 
-from ..config import DEFAULT_CLAUDE_MODEL, FALLBACK_MODELS
+# Handle both relative and absolute imports
+try:
+    from ..config import DEFAULT_CLAUDE_MODEL, FALLBACK_MODELS
+except ImportError:
+    from config import DEFAULT_CLAUDE_MODEL, FALLBACK_MODELS
 
 
 def normalize_model_name(model_name: str) -> str:
