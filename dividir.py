@@ -5,4 +5,4 @@ def dividir(numerador, denominador):
 
 if __name__ == "__main__":
     resultado = dividir(10, 2)
-    print("Resultado:", resultado)
+    print("Resultado:", resultado) 
