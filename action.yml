@@ -119,7 +119,7 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
-        BASE_BRANCH="${{ github.ref_name }}"
+        BASE_BRANCH="${{ github.head_ref || github.ref_name }}"
         PR_URL=$(gh pr create \
           --title "🤖 Claude AutoFix: correcoes automaticas para testes falhados" \
           --body "## 🤖 Claude AutoFix
