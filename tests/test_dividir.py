@@ -1,5 +1,5 @@
 import pytest
-from dividir import dividir
+from functions.dividir import dividir
 
 def test_dividir_ok():
     assert dividir(10, 2) == 5

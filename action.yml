@@ -1,0 +1,170 @@
+name: "Claude AutoFix"
+description: "Analisa e corrige automaticamente testes Python falhados usando Claude AI"
+
+branding:
+  icon: "cpu"
+  color: "orange"
+
+inputs:
+  anthropic-api-key:
+    description: "Chave da API da Anthropic (ANTHROPIC_API_KEY)"
+    required: true
+  max-fixes:
+    description: "Numero maximo de correcoes por execucao"
+    required: false
+    default: "5"
+  python-version:
+    description: "Versao do Python a usar"
+    required: false
+    default: "3.11"
+  create-pr:
+    description: "Criar Pull Request automaticamente com as correcoes (true/false)"
+    required: false
+    default: "true"
+
+outputs:
+  fixes-applied:
+    description: "Numero de correcoes aplicadas com sucesso"
+    value: ${{ steps.summary.outputs.fixes_applied }}
+  pr-url:
+    description: "URL do Pull Request criado com as correcoes"
+    value: ${{ steps.create_pr.outputs.pr_url }}
+
+runs:
+  using: "composite"
+  steps:
+
+    - name: Instalar Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Instalar dependencias
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-json-report
+
+    - name: Executar testes e gerar relatorio
+      shell: bash
+      continue-on-error: true
+      run: |
+        pytest --json-report || true
+
+    - name: Verificar falhas no relatorio
+      id: check
+      shell: bash
+      run: |
+        if [ ! -f ".report.json" ]; then
+          echo "failures=0" >> $GITHUB_OUTPUT
+          echo "Relatorio de testes nao encontrado."
+          exit 0
+        fi
+        FAILURES=$(python3 -c "
+        import json
+        data = json.load(open('.report.json'))
+        print(sum(1 for t in data.get('tests', []) if t.get('outcome') == 'failed'))
+        ")
+        echo "failures=${FAILURES}" >> $GITHUB_OUTPUT
+        echo "Testes falhados encontrados: ${FAILURES}"
+
+    - name: Gerar e aplicar correcoes com Claude AI
+      id: fix
+      if: steps.check.outputs.failures != '0'
+      shell: bash
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+      run: |
+        python ${{ github.action_path }}/ci/claude_fix.py \
+          --report .report.json \
+          --apply \
+          --max-fixes ${{ inputs.max-fixes }}
+
+    - name: Verificar alteracoes geradas
+      id: changes
+      shell: bash
+      run: |
+        if git diff --quiet; then
+          echo "has_changes=false" >> $GITHUB_OUTPUT
+        else
+          echo "has_changes=true" >> $GITHUB_OUTPUT
+          echo "Alteracoes detetadas:"
+          git diff --name-only
+        fi
+
+    - name: Configurar git
+      if: steps.changes.outputs.has_changes == 'true'
+      shell: bash
+      run: |
+        git config user.name "Claude AutoFix Bot"
+        git config user.email "claude-autofix@users.noreply.github.com"
+
+    - name: Criar branch e commit com as correcoes
+      id: commit
+      if: steps.changes.outputs.has_changes == 'true'
+      shell: bash
+      run: |
+        TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+        BRANCH="claude-auto-fix-${TIMESTAMP}"
+        echo "branch=${BRANCH}" >> $GITHUB_OUTPUT
+        git checkout -b "${BRANCH}"
+        git add -u
+        git commit -m "fix: correcoes automaticas geradas pelo Claude AI"
+        git push origin "${BRANCH}"
+
+    - name: Criar Pull Request
+      id: create_pr
+      if: steps.changes.outputs.has_changes == 'true' && inputs.create-pr == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        BASE_BRANCH="${{ github.ref_name }}"
+        PR_URL=$(gh pr create \
+          --title "🤖 Claude AutoFix: correcoes automaticas para testes falhados" \
+          --body "## 🤖 Claude AutoFix
+
+        Este PR foi criado automaticamente pelo [Claude AutoFix Action](https://github.com/${{ github.action_repository }}).
+
+        ### O que foi feito
+        - Testes falhados foram analisados pelo Claude AI
+        - Correcoes foram geradas e aplicadas automaticamente
+
+        ### Proximos passos
+        1. Reviste as alteracoes
+        2. Executa os testes localmente para confirmar
+        3. Faz merge se estiver tudo correto
+
+        ---
+        🤖 Gerado com [Claude AutoFix](https://github.com/${{ github.action_repository }})" \
+          --base "${BASE_BRANCH}" \
+          --head "${{ steps.commit.outputs.branch }}")
+        echo "pr_url=${PR_URL}" >> $GITHUB_OUTPUT
+        echo "PR criado: ${PR_URL}"
+
+    - name: Resumo da execucao
+      id: summary
+      if: always()
+      shell: bash
+      run: |
+        FIXES=0
+        if [ -f "claude-patches/summary.json" ]; then
+          FIXES=$(python3 -c "import json; d=json.load(open('claude-patches/summary.json')); print(d.get('successful', 0))")
+        fi
+        echo "fixes_applied=${FIXES}" >> $GITHUB_OUTPUT
+        echo "### Claude AutoFix" >> $GITHUB_STEP_SUMMARY
+        echo "- Testes falhados: ${{ steps.check.outputs.failures }}" >> $GITHUB_STEP_SUMMARY
+        echo "- Correcoes aplicadas: ${FIXES}" >> $GITHUB_STEP_SUMMARY
+        if [ -n "${{ steps.create_pr.outputs.pr_url }}" ]; then
+          echo "- PR criado: ${{ steps.create_pr.outputs.pr_url }}" >> $GITHUB_STEP_SUMMARY
+        fi
+
+    - name: Guardar patches como artefacto
+      if: always()
+      uses: actions/upload-artifact@v4
+      continue-on-error: true
+      with:
+        name: claude-patches
+        path: claude-patches/
+        retention-days: 7
+        if-no-files-found: ignore
