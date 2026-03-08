@@ -30,6 +30,8 @@ def infer_source_file(failure: Dict[str, Any]) -> Optional[str]:
             search_paths = [
                 Path(potential_source),  # Same directory
                 Path.cwd() / potential_source,  # From working directory
+                Path.cwd() / "functions" / potential_source,  # functions/ folder
+                Path.cwd() / "src" / potential_source,  # src/ folder
             ]
 
             for search_path in search_paths:
