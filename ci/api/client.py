@@ -12,17 +12,17 @@ from typing import Any, Dict, List, Optional
 
 # Handle both relative and absolute imports
 try:
-    from ..config import API_BASE_URL, ANTHROPIC_VERSION, DEFAULT_CLAUDE_MODEL
-    from .models import iter_candidate_models, resolve_model_name
+    from ..config import API_BASE_URL, ANTHROPIC_VERSION, FIX_CLAUDE_MODEL
+    from .models import iter_candidate_models
 except ImportError:
-    from config import API_BASE_URL, ANTHROPIC_VERSION, DEFAULT_CLAUDE_MODEL
-    from api.models import iter_candidate_models, resolve_model_name
+    from config import API_BASE_URL, ANTHROPIC_VERSION, FIX_CLAUDE_MODEL
+    from api.models import iter_candidate_models
 
 
 def send_to_claude(api_key: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     """Send request to Claude API with retry logic."""
     errors: List[str] = []
-    model_name = payload.get("model", DEFAULT_CLAUDE_MODEL)
+    model_name = payload.get("model", FIX_CLAUDE_MODEL)
 
     for current_model in iter_candidate_models(model_name):
         # Update payload with current model

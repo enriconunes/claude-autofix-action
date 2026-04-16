@@ -4,6 +4,27 @@ on:
   pull_request:
     branches: [ main ]
 
+  workflow_call:
+    inputs:
+      test-framework:
+        description: "Test framework: pytest | vitest | jest"
+        required: false
+        default: "pytest"
+        type: string
+      language:
+        description: "Source language: python | typescript | javascript"
+        required: false
+        default: "python"
+        type: string
+      python-version:
+        description: "Python version to use"
+        required: false
+        default: "3.11"
+        type: string
+    secrets:
+      anthropic-api-key:
+        required: true
+
 permissions:
   contents: read
   issues: write

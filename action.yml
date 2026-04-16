@@ -1,5 +1,5 @@
 name: "Claude AutoFix"
-description: "Automatically analyses and fixes failing Python tests using Claude AI"
+description: "Automatically analyses and fixes failing tests using Claude AI (Python/pytest, JS/TS with Vitest or Jest)"
 
 branding:
   icon: "cpu"
@@ -21,6 +21,14 @@ inputs:
     description: "Automatically create a Pull Request with the fixes (true/false)"
     required: false
     default: "true"
+  test-framework:
+    description: "Test framework: pytest | vitest | jest"
+    required: false
+    default: "pytest"
+  language:
+    description: "Source language: python | typescript | javascript"
+    required: false
+    default: "python"
 
 outputs:
   fixes-applied:
@@ -39,17 +47,39 @@ runs:
       with:
         python-version: ${{ inputs.python-version }}
 
-    - name: Install dependencies
+    - name: Set up Node.js (JS/TS projects)
+      if: ${{ inputs.test-framework == 'vitest' || inputs.test-framework == 'jest' }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+
+    - name: Install Python test dependencies
+      if: ${{ inputs.test-framework == 'pytest' }}
       shell: bash
       run: |
         python -m pip install --upgrade pip
         pip install pytest pytest-json-report
 
-    - name: Run tests and generate report
+    - name: Run pytest and generate report
+      if: ${{ inputs.test-framework == 'pytest' }}
       shell: bash
       continue-on-error: true
       run: |
         pytest --json-report || true
+
+    - name: Run Vitest and generate report
+      if: ${{ inputs.test-framework == 'vitest' }}
+      shell: bash
+      continue-on-error: true
+      run: |
+        npx vitest run --reporter=json --outputFile=.report.json || true
+
+    - name: Run Jest and generate report
+      if: ${{ inputs.test-framework == 'jest' }}
+      shell: bash
+      continue-on-error: true
+      run: |
+        npx jest --json --outputFile=.report.json || true
 
     - name: Check for test failures
       id: check
@@ -63,7 +93,12 @@ runs:
         FAILURES=$(python3 -c "
         import json
         data = json.load(open('.report.json'))
-        print(sum(1 for t in data.get('tests', []) if t.get('outcome') == 'failed'))
+        # pytest format: list of tests with 'outcome'
+        if 'tests' in data:
+            print(sum(1 for t in data.get('tests', []) if t.get('outcome') == 'failed'))
+        # vitest/jest format: top-level numFailedTests counter
+        else:
+            print(data.get('numFailedTests', 0))
         ")
         echo "failures=${FAILURES}" >> $GITHUB_OUTPUT
         echo "Failing tests found: ${FAILURES}"
@@ -77,7 +112,9 @@ runs:
       run: |
         python ${{ github.action_path }}/ci/claude_report.py \
           --report .report.json \
-          --comment-file claude_comment.md
+          --comment-file claude_comment.md \
+          --framework ${{ inputs.test-framework }} \
+          --language ${{ inputs.language }}
 
     - name: Post analysis comment on PR
       if: steps.check.outputs.failures != '0' && github.event_name == 'pull_request'
@@ -114,7 +151,9 @@ runs:
         python ${{ github.action_path }}/ci/claude_fix.py \
           --report .report.json \
           --apply \
-          --max-fixes ${{ inputs.max-fixes }}
+          --max-fixes ${{ inputs.max-fixes }} \
+          --framework ${{ inputs.test-framework }} \
+          --language ${{ inputs.language }}
 
     - name: Check for generated changes
       id: changes

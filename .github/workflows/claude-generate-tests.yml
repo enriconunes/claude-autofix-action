@@ -1,0 +1,292 @@
+name: "Claude Generate Tests"
+
+# ── Trigger A: manual — specify a file via the GitHub Actions UI ─────────────
+# ── Trigger B: automatic — fires on PRs when AUTO_GENERATE_TESTS_ON_PR=True ──
+on:
+  workflow_dispatch:
+    inputs:
+      file-path:
+        description: "Source file to generate tests for (e.g. src/math.ts or functions/dividir.py)"
+        required: true
+      framework:
+        description: "Test framework: pytest | vitest | jest"
+        required: false
+        default: "pytest"
+      language:
+        description: "Language: python | typescript | javascript"
+        required: false
+        default: "python"
+
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize]
+
+  workflow_call:
+    inputs:
+      file-path:
+        description: "Source file to generate tests for"
+        required: false
+        default: ""
+        type: string
+      framework:
+        description: "Test framework: pytest | vitest | jest"
+        required: false
+        default: "pytest"
+        type: string
+      language:
+        description: "Language: python | typescript | javascript"
+        required: false
+        default: "python"
+        type: string
+    secrets:
+      anthropic-api-key:
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  generate-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # ── Trigger B only: read AUTO_GENERATE_TESTS_ON_PR from config.py ────────
+      - name: Check if auto-generation on PR is enabled
+        id: auto_check
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          ENABLED=$(python3 -c "
+          import sys
+          sys.path.insert(0, '${{ github.workspace }}/ci')
+          from config import AUTO_GENERATE_TESTS_ON_PR
+          print('true' if AUTO_GENERATE_TESTS_ON_PR else 'false')
+          ")
+          echo "enabled=${ENABLED}" >> $GITHUB_OUTPUT
+          echo "Auto test generation on PR enabled: ${ENABLED}"
+
+      # ── Trigger B only: detect changed source files that have no test yet ────
+      - name: Find changed source files without tests
+        id: find_files
+        if: github.event_name == 'pull_request' && steps.auto_check.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          # Read framework/language defaults from config (used for the auto trigger)
+          read FRAMEWORK LANGUAGE <<< $(python3 -c "
+          import sys
+          sys.path.insert(0, '${{ github.workspace }}/ci')
+          from config import AUTO_GENERATE_TESTS_FRAMEWORK, AUTO_GENERATE_TESTS_LANGUAGE
+          print(AUTO_GENERATE_TESTS_FRAMEWORK, AUTO_GENERATE_TESTS_LANGUAGE)
+          ")
+          echo "framework=${FRAMEWORK}" >> $GITHUB_OUTPUT
+          echo "language=${LANGUAGE}"   >> $GITHUB_OUTPUT
+
+          # Get files changed in this PR relative to base branch
+          CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+
+          # Filter to source files that don't yet have a test counterpart
+          FILES=$(python3 - <<'PYEOF'
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, '${{ github.workspace }}/ci')
+
+          changed_raw = """$CHANGED"""
+          changed = [f.strip() for f in changed_raw.strip().splitlines() if f.strip()]
+
+          py_exts  = {".py"}
+          js_exts  = {".ts", ".tsx", ".js", ".jsx"}
+          all_exts = py_exts | js_exts
+          test_indicators = ["test_", ".test.", ".spec.", "__tests__"]
+
+          candidates = []
+          for f in changed:
+              p = Path(f)
+              if not p.exists():
+                  continue
+              if p.suffix not in all_exts:
+                  continue
+              if any(ind in f for ind in test_indicators):
+                  continue
+              # Check if a test counterpart already exists
+              if p.suffix in py_exts:
+                  test_path = Path.cwd() / "tests" / f"test_{p.name}"
+              else:
+                  test_path = p.parent / "__tests__" / f"{p.stem}.test{p.suffix}"
+              if test_path.exists():
+                  continue
+              candidates.append(f)
+
+          print(" ".join(candidates))
+          PYEOF
+          )
+
+          echo "files=${FILES}" >> $GITHUB_OUTPUT
+          if [ -n "${FILES}" ]; then
+            echo "Source files to process: ${FILES}"
+          else
+            echo "No source files without tests found."
+          fi
+
+      # ── Trigger A: generate tests for the manually specified file ─────────────
+      - name: Generate tests (manual trigger)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        shell: bash
+        run: |
+          python ci/claude_generate_tests.py \
+            --files "${{ inputs.file-path }}" \
+            --framework "${{ inputs.framework }}" \
+            --language "${{ inputs.language }}"
+
+      # ── Trigger B: generate tests for changed files ───────────────────────────
+      - name: Generate tests (PR auto trigger)
+        if: >
+          github.event_name == 'pull_request' &&
+          steps.auto_check.outputs.enabled == 'true' &&
+          steps.find_files.outputs.files != ''
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        shell: bash
+        run: |
+          python ci/claude_generate_tests.py \
+            --files ${{ steps.find_files.outputs.files }} \
+            --framework "${{ steps.find_files.outputs.framework }}" \
+            --language "${{ steps.find_files.outputs.language }}"
+
+      # ── Common: check if any test files were generated ────────────────────────
+      - name: Check for generated test files
+        id: changes
+        shell: bash
+        run: |
+          if [ ! -f "claude-generated-tests/summary.json" ]; then
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          GENERATED=$(python3 -c "
+          import json
+          data = json.load(open('claude-generated-tests/summary.json'))
+          print(data.get('generated', 0))
+          ")
+          if [ "${GENERATED}" -gt "0" ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "${GENERATED} test file(s) generated."
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "No test files were generated."
+          fi
+
+      # ── Common: create a branch and commit the generated test files ───────────
+      - name: Configure git
+        if: steps.changes.outputs.has_changes == 'true'
+        shell: bash
+        run: |
+          git config user.name  "Claude AutoFix Bot"
+          git config user.email "claude-autofix@users.noreply.github.com"
+
+      - name: Create branch and commit generated tests
+        id: commit
+        if: steps.changes.outputs.has_changes == 'true'
+        shell: bash
+        run: |
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          BRANCH="claude-generated-tests-${TIMESTAMP}"
+          echo "branch=${BRANCH}" >> $GITHUB_OUTPUT
+
+          git checkout -b "${BRANCH}"
+
+          # Stage only the generated test files (from summary.json)
+          python3 -c "
+          import json
+          data = json.load(open('claude-generated-tests/summary.json'))
+          for r in data['results']:
+              if r.get('success') and r.get('test_file'):
+                  print(r['test_file'])
+          " | xargs git add
+
+          git commit -m "test: add Claude AI generated tests"
+          git push origin "${BRANCH}"
+
+      # ── Common: open a PR with the generated tests ────────────────────────────
+      - name: Create Pull Request with generated tests
+        id: create_pr
+        if: steps.changes.outputs.has_changes == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BASE_BRANCH="${{ github.head_ref || github.ref_name }}"
+
+          # Build PR body listing generated test files
+          TEST_FILES=$(python3 -c "
+          import json
+          data = json.load(open('claude-generated-tests/summary.json'))
+          lines = [f\"- \`{r['test_file']}\`\" for r in data['results'] if r.get('success')]
+          print('\n'.join(lines))
+          ")
+
+          PR_URL=$(gh pr create \
+            --title "🧪 Claude AutoFix: generated tests" \
+            --body "## 🧪 Claude AutoFix — Generated Tests
+
+          This PR was automatically created by [Claude AutoFix Action](https://github.com/${{ github.action_repository }}).
+
+          ### Generated test files
+          ${TEST_FILES}
+
+          ### Next steps
+          1. Review the generated tests for correctness
+          2. Run the test suite locally to confirm they pass
+          3. Adjust or extend the tests as needed
+          4. Merge when ready
+
+          ### Details
+          - Triggered by: \`${{ github.event_name }}\`
+          - Source branch: \`${BASE_BRANCH}\`
+          - Workflow run: [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+          ---
+          🤖 Generated with [Claude AutoFix](https://github.com/${{ github.action_repository }})" \
+            --base "${BASE_BRANCH}" \
+            --head "${{ steps.commit.outputs.branch }}")
+
+          echo "pr_url=${PR_URL}" >> $GITHUB_OUTPUT
+          echo "Generated tests PR created: ${PR_URL}"
+
+      # ── PR trigger only: comment on the original PR with the new PR link ──────
+      - name: Post generated tests PR link on original PR
+        if: steps.changes.outputs.has_changes == 'true' && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const prUrl = '${{ steps.create_pr.outputs.pr_url }}';
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.issue.number,
+              body: `## 🧪 Claude AutoFix — Generated Tests\n\nNew source files were detected in this PR without test coverage.\nA PR with generated tests has been created:\n\n🔗 **Tests PR**: ${prUrl}\n\nPlease review the generated tests before merging.`,
+            });
+
+      # ── Always: upload generated files as artifact ────────────────────────────
+      - name: Upload generated tests as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: claude-generated-tests
+          path: claude-generated-tests/
+          retention-days: 7
+          if-no-files-found: ignore

@@ -11,6 +11,27 @@ on:
     types:
       - completed
 
+  workflow_call:
+    inputs:
+      test-framework:
+        description: "Test framework: pytest | vitest | jest"
+        required: false
+        default: "pytest"
+        type: string
+      language:
+        description: "Source language: python | typescript | javascript"
+        required: false
+        default: "python"
+        type: string
+      max-fixes:
+        description: "Maximum number of fixes per run"
+        required: false
+        default: "5"
+        type: string
+    secrets:
+      anthropic-api-key:
+        required: true
+
 permissions:
   contents: write
   pull-requests: write
