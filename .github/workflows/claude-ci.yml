@@ -42,6 +42,13 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Checkout claude-autofix-action scripts
+        uses: actions/checkout@v4
+        with:
+          repository: enriconunes/claude-autofix-action
+          ref: dev/vitest-support
+          path: _claude_tool
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -58,7 +65,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          python ci/claude_report.py --report .report.json --comment-file claude_comment.md
+          python _claude_tool/ci/claude_report.py --report .report.json --comment-file claude_comment.md
 
       - name: Comment Claude analysis on PR
         if: always() && github.event_name == 'pull_request'
