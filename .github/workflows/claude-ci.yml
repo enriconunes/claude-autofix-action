@@ -63,7 +63,7 @@ jobs:
       - name: Process pytest report with Claude
         if: always()
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.anthropic-api-key || secrets.ANTHROPIC_API_KEY }}
         run: |
           python _claude_tool/ci/claude_report.py --report .report.json --comment-file claude_comment.md
 

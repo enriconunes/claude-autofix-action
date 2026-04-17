@@ -117,7 +117,7 @@ jobs:
       - name: Generate and apply fixes
         if: steps.check_report.outputs.report_exists == 'true' && steps.check_report.outputs.failure_count != '0'
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.anthropic-api-key || secrets.ANTHROPIC_API_KEY }}
         continue-on-error: true
         run: |
           echo "Generating fixes with Claude..."

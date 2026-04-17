@@ -151,7 +151,7 @@ jobs:
       - name: Generate tests (manual trigger)
         if: github.event_name == 'workflow_dispatch'
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.anthropic-api-key || secrets.ANTHROPIC_API_KEY }}
         shell: bash
         run: |
           python _claude_tool/ci/claude_generate_tests.py \
@@ -166,7 +166,7 @@ jobs:
           steps.auto_check.outputs.enabled == 'true' &&
           steps.find_files.outputs.files != ''
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.anthropic-api-key || secrets.ANTHROPIC_API_KEY }}
         shell: bash
         run: |
           python _claude_tool/ci/claude_generate_tests.py \
