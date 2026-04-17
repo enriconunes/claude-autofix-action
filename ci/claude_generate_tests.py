@@ -77,13 +77,19 @@ def has_testable_content(source_code: str, language: str) -> bool:
                 return True
         return False
     else:
-        # JS / TS: look for exported symbols
+        # JS / TS: look for exported symbols (including async variants)
         return any(kw in source_code for kw in [
             "export function",
+            "export async function",
             "export class",
+            "export abstract class",
             "export const",
             "export let",
+            "export var",
             "export default",
+            "export enum",
+            "export type ",
+            "export interface",
             "module.exports",
         ])
 
