@@ -1,6 +1,8 @@
 # Claude AutoFix Action
 
-Automatically detects failing Python tests in Pull Requests, posts a diagnosis comment, generates a fix using Claude AI, and opens a new PR with the corrected code.
+Automatically detects failing tests in Pull Requests, posts a diagnosis comment, generates a fix using Claude AI, and opens a new PR with the corrected code.
+
+Supports **Python (pytest)**, **TypeScript (Vitest/Jest)**, and **JavaScript (Vitest/Jest)**.
 
 ---
 
@@ -41,7 +43,13 @@ After creating it, configure two permissions:
 
 ---
 
-## Step 2 — Set up your Python project
+## Step 2 — Set up your project
+
+Choose the setup that matches your project language.
+
+---
+
+### Python project (pytest)
 
 Your project must follow this structure:
 
@@ -85,10 +93,61 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Claude AutoFix
-        uses: enriconunes/claude-autofix-action@v1
+        uses: enriconunes/claude-autofix-action@v2
         with:
           anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
+
+---
+
+### TypeScript project (Vitest)
+
+Your project must follow this structure:
+
+```
+my-project/
+├── .github/
+│   └── workflows/
+│       └── autofix.yml       ← workflow file (created below)
+├── src/
+│   └── myModule.ts           ← your source code
+├── src/__tests__/
+│   └── myModule.test.ts      ← your tests
+└── package.json
+```
+
+**`.github/workflows/autofix.yml`** — the workflow that triggers the action:
+
+```yaml
+name: Claude AutoFix
+
+on:
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  autofix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Claude AutoFix
+        uses: enriconunes/claude-autofix-action@v2
+        with:
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          test-framework: "vitest"
+          language: "typescript"
+```
+
+> For **JavaScript with Vitest**, use `language: "javascript"`.
+> For **Jest**, use `test-framework: "jest"` instead.
 
 ---
 
@@ -183,14 +242,20 @@ Review the fix PR, confirm the changes look correct, and click **"Merge pull req
 ## Available options
 
 ```yaml
-- uses: enriconunes/claude-autofix-action@v1
+- uses: enriconunes/claude-autofix-action@v2
   with:
     anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+
+    # Test framework to use: pytest | vitest | jest (default: pytest)
+    test-framework: "pytest"
+
+    # Source language: python | typescript | javascript (default: python)
+    language: "python"
 
     # Maximum number of fixes per run (default: 5)
     max-fixes: "3"
 
-    # Python version to use (default: 3.11)
+    # Python version to use — only relevant for pytest (default: 3.11)
     python-version: "3.12"
 
     # Automatically create a PR with the fixes (default: true)
@@ -199,10 +264,28 @@ Review the fix PR, confirm the changes look correct, and click **"Merge pull req
 
 ---
 
+## Bonus — Automatic test generation
+
+The action also includes an optional workflow that uses Claude to **generate test files** for source files that don't have tests yet.
+
+**How to enable it:**
+
+Create a new file at `.github/workflows/generate-tests.yml` in your project and copy the contents from the `claude-generate-tests.yml` workflow in this repository.
+
+**Two ways to use it:**
+
+1. **Manually** — go to `Actions → Claude Generate Tests → Run workflow`, select the file you want tests for, and run it.
+
+2. **Automatically on PRs** — enabled by setting `AUTO_GENERATE_TESTS_ON_PR = True` in `ci/config.py`. When off (default), the workflow only runs when triggered manually.
+
+When run, Claude reads the source file, understands what it does, and writes a complete test file based on the framework you configured.
+
+---
+
 ## Requirements
 
-- Tests written with **pytest** following the `test_*.py` naming convention
-- Test files in a `tests/` folder (or root directory)
+- For **Python**: test files following the `test_*.py` naming convention, inside a `tests/` folder
+- For **TypeScript/JavaScript**: test files following the `*.test.ts` / `*.test.js` naming convention, inside a `__tests__/` folder or alongside source files
 - Source files in a `functions/`, `src/`, or root directory
 
 ---
