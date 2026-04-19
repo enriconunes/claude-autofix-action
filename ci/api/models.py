@@ -2,39 +2,44 @@
 
 from __future__ import annotations
 
-import os
 from typing import Iterator
 
 # Handle both relative and absolute imports
 try:
-    from ..config import DEFAULT_CLAUDE_MODEL, FALLBACK_MODELS
+    from ..config import (
+        COMMENT_CLAUDE_MODEL, FIX_CLAUDE_MODEL,
+        GENERATE_TESTS_CLAUDE_MODEL, FALLBACK_MODELS,
+    )
 except ImportError:
-    from config import DEFAULT_CLAUDE_MODEL, FALLBACK_MODELS
+    from config import (
+        COMMENT_CLAUDE_MODEL, FIX_CLAUDE_MODEL,
+        GENERATE_TESTS_CLAUDE_MODEL, FALLBACK_MODELS,
+    )
 
 
-def normalize_model_name(model_name: str) -> str:
-    """Ensure the Claude model name is valid."""
-    return model_name.strip()
+def resolve_comment_model() -> str:
+    """Return the model to use for PR comment analysis (claude_report.py)."""
+    return COMMENT_CLAUDE_MODEL.strip()
 
 
-def resolve_model_name() -> str:
-    """Return the Claude model name, allowing override via CLAUDE_MODEL env var."""
-    configured_name = os.environ.get("CLAUDE_MODEL", DEFAULT_CLAUDE_MODEL)
-    if not configured_name or not configured_name.strip():
-        configured_name = DEFAULT_CLAUDE_MODEL
-    return normalize_model_name(configured_name)
+def resolve_fix_model() -> str:
+    """Return the model to use for code fix generation (claude_fix.py)."""
+    return FIX_CLAUDE_MODEL.strip()
+
+
+def resolve_generate_tests_model() -> str:
+    """Return the model to use for test generation (claude_generate_tests.py)."""
+    return GENERATE_TESTS_CLAUDE_MODEL.strip()
 
 
 def iter_candidate_models(model_name: str) -> Iterator[str]:
-    """Yield model name variants to improve compatibility."""
+    """Yield the given model name then fallbacks, for retry logic in the API client."""
     yielded = set()
 
-    # Try original model first
     if model_name and model_name not in yielded:
         yielded.add(model_name)
         yield model_name
 
-    # Then try fallback models
     for fallback in FALLBACK_MODELS:
         if fallback not in yielded:
             yielded.add(fallback)

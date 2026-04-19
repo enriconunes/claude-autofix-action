@@ -5,28 +5,110 @@ from __future__ import annotations
 import re
 from typing import Optional
 
+# Fenced code-block language tags recognised per language family
+_PYTHON_TAGS = {"python", "py", ""}
+_JS_TAGS = {"javascript", "js", "jsx"}
+_TS_TAGS = {"typescript", "ts", "tsx"}
+_ALL_CODE_TAGS = _PYTHON_TAGS | _JS_TAGS | _TS_TAGS
 
-def extract_code_from_response(response_text: str) -> Optional[str]:
-    """Extract Python code from Claude's response."""
-    # First, try to extract from markdown code fence
-    code_pattern = r'```(?:python)?\s*\n(.*?)\n```'
-    matches = re.findall(code_pattern, response_text, re.DOTALL | re.IGNORECASE)
+# Keywords that indicate the start of a JS/TS source file
+_JS_TS_KEYWORDS = (
+    "const ",
+    "let ",
+    "var ",
+    "function ",
+    "class ",
+    "import ",
+    "export ",
+    "interface ",
+    "type ",
+    "async ",
+    "//",
+)
 
-    if matches:
-        return matches[0].strip()
 
-    # If no code fence, check if the response looks like Python code
+def extract_code_from_response(
+    response_text: str,
+    language: str = "python",
+) -> Optional[str]:
+    """Extract source code from Claude's response.
+
+    Args:
+        response_text: Raw text returned by the Claude API.
+        language:      Target language — "python", "typescript", or "javascript".
+                       Controls which fenced-block tags are preferred and which
+                       keyword heuristics are used for unfenced responses.
+
+    Returns:
+        The extracted source code string, or ``None`` if nothing suitable was found.
+    """
+    lang = language.lower().strip()
+
+    if lang in ("typescript", "javascript"):
+        return _extract_js_ts(response_text, lang)
+    return _extract_python(response_text)
+
+
+# ---------------------------------------------------------------------------
+# Private helpers
+# ---------------------------------------------------------------------------
+
+def _extract_fenced(response_text: str, preferred_tags: set) -> Optional[str]:
+    """Try to extract the first fenced code block whose language tag is in *preferred_tags*.
+
+    Falls back to any recognised code tag if no preferred match is found.
+    """
+    pattern = r'```(\w*)\s*\n(.*?)\n```'
+    matches = re.findall(pattern, response_text, re.DOTALL | re.IGNORECASE)
+
+    # Preferred pass — exact language match
+    for tag, code in matches:
+        if tag.lower() in preferred_tags:
+            return code.strip()
+
+    # Fallback pass — any known code tag
+    for tag, code in matches:
+        if tag.lower() in _ALL_CODE_TAGS:
+            return code.strip()
+
+    return None
+
+
+def _extract_python(response_text: str) -> Optional[str]:
+    """Extract Python code from a Claude response."""
+    fenced = _extract_fenced(response_text, _PYTHON_TAGS)
+    if fenced:
+        return fenced
+
+    # Heuristic: response starts with Python-like syntax
     lines = response_text.strip().split('\n')
     if lines:
-        first_line = lines[0].strip()
-        # Check if it starts with Python-like content
-        if (first_line.startswith('def ') or
-            first_line.startswith('class ') or
-            first_line.startswith('import ') or
-            first_line.startswith('from ') or
-            first_line.startswith('#') or
-            first_line == '' and len(lines) > 1):
-            # Looks like Python code, return the whole response
+        first = lines[0].strip()
+        if (
+            first.startswith('def ')
+            or first.startswith('class ')
+            or first.startswith('import ')
+            or first.startswith('from ')
+            or first.startswith('#')
+            or (first == '' and len(lines) > 1)
+        ):
+            return response_text.strip()
+
+    return None
+
+
+def _extract_js_ts(response_text: str, lang: str) -> Optional[str]:
+    """Extract JavaScript or TypeScript code from a Claude response."""
+    preferred = _TS_TAGS if lang == "typescript" else _JS_TAGS
+    fenced = _extract_fenced(response_text, preferred)
+    if fenced:
+        return fenced
+
+    # Heuristic: response starts with a JS/TS keyword
+    lines = response_text.strip().split('\n')
+    if lines:
+        first = lines[0].strip()
+        if any(first.startswith(kw) for kw in _JS_TS_KEYWORDS):
             return response_text.strip()
 
     return None

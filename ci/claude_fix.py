@@ -14,11 +14,11 @@ from typing import Any, Dict, List
 # Add ci directory to path to enable imports
 sys.path.insert(0, str(Path(__file__).parent))
 
-from api import send_to_claude, resolve_model_name
-from config import FIX_PROMPT
+from api import send_to_claude, resolve_fix_model
+from config import get_fix_prompt
 from file_utils import read_source
-from fix import infer_source_file, extract_code_from_response
-from pytest import load_report, extract_failures, format_longrepr
+from fix import extract_code_from_response
+from adapters import get_adapter
 
 
 def parse_args() -> argparse.Namespace:
@@ -27,7 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--report",
         default=".report.json",
-        help="Path to the pytest JSON report",
+        help="Path to the test JSON report",
     )
     parser.add_argument(
         "--output-dir",
@@ -45,6 +45,18 @@ def parse_args() -> argparse.Namespace:
         default=5,
         help="Maximum number of fixes to attempt (default: 5)",
     )
+    parser.add_argument(
+        "--framework",
+        default="pytest",
+        choices=["pytest", "vitest", "jest"],
+        help="Test framework used to generate the report (default: pytest)",
+    )
+    parser.add_argument(
+        "--language",
+        default="python",
+        choices=["python", "typescript", "javascript"],
+        help="Source language of the project (default: python)",
+    )
     return parser.parse_args()
 
 
@@ -52,25 +64,26 @@ def build_fix_payload(
     failure: Dict[str, Any],
     report: Dict[str, Any],
     index: int,
-    source_file_path: str
+    source_file_path: str,
+    language: str = "Python",
+    traceback_text: str = "",
 ) -> Dict[str, Any]:
     """Build API payload for Claude to generate fix."""
     source_code = read_source(source_file_path)
-    longrepr = failure.get("longrepr")
-    traceback_text = format_longrepr(longrepr)
     failure_json = json.dumps(failure, indent=2, ensure_ascii=False)
+    fix_prompt = get_fix_prompt(language=language)
 
     body = textwrap.dedent(
         f"""
-        {FIX_PROMPT}
+        {fix_prompt}
 
         ### Failing Test #{index}
         - **Node ID:** {failure.get('nodeid', 'unknown')}
         - **Test Outcome:** {failure.get('outcome')}
         - **Source File to Fix:** {source_file_path}
 
-        ### Python Source Code (ORIGINAL FILE - PRESERVE ALL CODE)
-        ```python
+        ### {language} Source Code (ORIGINAL FILE - PRESERVE ALL CODE)
+        ```
         {source_code}
         ```
 
@@ -89,7 +102,7 @@ def build_fix_payload(
     ).strip()
 
     return {
-        "model": resolve_model_name(),
+        "model": resolve_fix_model(),
         "max_tokens": 4096,
         "messages": [
             {
@@ -106,7 +119,8 @@ def process_failure(
     index: int,
     api_key: str,
     output_dir: Path,
-    apply_fixes: bool
+    apply_fixes: bool,
+    adapter: Any,
 ) -> Dict[str, Any]:
     """Process a single test failure and generate/apply fix."""
     nodeid = failure.get('nodeid', 'unknown')
@@ -114,8 +128,8 @@ def process_failure(
     print(f"Processing failure {index}: {nodeid}")
     print('='*60)
 
-    # Infer source file from test name
-    source_path = infer_source_file(failure)
+    # Infer source file via the adapter (handles both Python and JS/TS)
+    source_path = adapter.infer_source_file(failure)
 
     if not source_path:
         print(f"⚠️  Could not determine source file path for {nodeid}")
@@ -134,8 +148,15 @@ def process_failure(
 
     print(f"  Target file: {source_file}")
 
+    # Format the failure traceback/message via the adapter
+    traceback_text = adapter.format_failure(failure)
+
     # Get fix from Claude
-    payload = build_fix_payload(failure, report, index, str(source_file))
+    payload = build_fix_payload(
+        failure, report, index, str(source_file),
+        language=adapter.get_language(),
+        traceback_text=traceback_text,
+    )
     print(f"Requesting fix from Claude...")
 
     try:
@@ -162,16 +183,16 @@ def process_failure(
     debug_file.write_text(response_text, encoding='utf-8')
     print(f"  Debug: Full response saved to {debug_file}")
 
-    # Extract Python code from response
-    fixed_code = extract_code_from_response(response_text)
+    # Extract source code from response (language-aware)
+    fixed_code = extract_code_from_response(response_text, language=adapter.get_language().lower())
 
     if not fixed_code:
-        print(f"⚠️  No valid Python code found in Claude response for {nodeid}")
+        print(f"⚠️  No valid {adapter.get_language()} code found in Claude response for {nodeid}")
         print(f"  Check {debug_file} for the full response")
         return {
             'nodeid': nodeid,
             'success': False,
-            'reason': 'No Python code in response',
+            'reason': f'No {adapter.get_language()} code in response',
             'debug_file': str(debug_file),
         }
 
@@ -212,8 +233,12 @@ def main() -> None:
     """Main entry point for claude_fix."""
     args = parse_args()
 
-    report = load_report(args.report)
-    failures = extract_failures(report)
+    # Select the right adapter for the chosen framework / language
+    adapter = get_adapter(args.framework, args.language)
+    print(f"Framework: {args.framework} | Language: {adapter.get_language()}")
+
+    report = adapter.parse_report(args.report)
+    failures = adapter.extract_failures(report)
 
     if not failures:
         print("No failing tests found in report. Nothing to fix.")
@@ -224,8 +249,8 @@ def main() -> None:
         print("ERROR: ANTHROPIC_API_KEY environment variable is not set.", file=sys.stderr)
         sys.exit(1)
 
-    model_name = resolve_model_name()
-    print(f"Using Claude model: {model_name}")
+    model_name = resolve_fix_model()
+    print(f"Using Claude model (fix): {model_name}")
 
     # Limit number of fixes to prevent overwhelming changes
     failures_to_fix = failures[:args.max_fixes]
@@ -243,7 +268,7 @@ def main() -> None:
 
     # Process each failure
     for index, failure in enumerate(failures_to_fix, start=1):
-        result = process_failure(failure, report, index, api_key, output_dir, args.apply)
+        result = process_failure(failure, report, index, api_key, output_dir, args.apply, adapter)
 
         if result['success']:
             successful_patches.append(result)
