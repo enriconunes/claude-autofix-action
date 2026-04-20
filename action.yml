@@ -29,6 +29,14 @@ inputs:
     description: "Source language: python | typescript | javascript"
     required: false
     default: "python"
+  enable-error-log:
+    description: "Append failing test info to logs/error_history.jsonl in main (true/false). Does not consume Claude tokens."
+    required: false
+    default: "false"
+  enable-insights:
+    description: "Post a Claude-powered insight comment on the PR based on the author's error history (true/false). Requires enable-error-log on previous runs to have data. Consumes Claude tokens."
+    required: false
+    default: "false"
 
 outputs:
   fixes-applied:
@@ -154,6 +162,261 @@ runs:
           --max-fixes ${{ inputs.max-fixes }} \
           --framework ${{ inputs.test-framework }} \
           --language ${{ inputs.language }}
+
+    - name: Parse failures for error log
+      if: inputs.enable-error-log == 'true' && steps.check.outputs.failures != '0'
+      shell: bash
+      env:
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_AUTHOR: ${{ github.event.pull_request.user.login || github.actor }}
+        BRANCH: ${{ github.head_ref || github.ref_name }}
+        FRAMEWORK: ${{ inputs.test-framework }}
+        FIX_OUTCOME: ${{ steps.fix.outcome }}
+      run: |
+        python3 << 'EOF'
+        import json, os
+        from datetime import datetime, timezone
+
+        try:
+            data = json.load(open('.report.json'))
+        except Exception:
+            print("Could not read .report.json, skipping log.")
+            exit(0)
+
+        ts         = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        pr         = os.environ.get('PR_NUMBER', '')
+        author     = os.environ.get('PR_AUTHOR', '')
+        branch     = os.environ.get('BRANCH', '')
+        framework  = os.environ.get('FRAMEWORK', 'pytest')
+        fix_applied = os.environ.get('FIX_OUTCOME', '') == 'success'
+
+        def extract_error(text):
+            """Return (error_type, error_msg) from a traceback string."""
+            for line in reversed((text or '').splitlines()):
+                line = line.strip().lstrip('E').strip()
+                if ':' in line:
+                    left, right = line.split(':', 1)
+                    left = left.strip()
+                    if left and left[0].isupper() and ' ' not in left and len(left) < 40:
+                        return left, right.strip()[:120]
+            return 'Error', ''
+
+        entries = []
+
+        if 'tests' in data:  # pytest
+            for t in data.get('tests', []):
+                if t.get('outcome') != 'failed':
+                    continue
+                longrepr = t.get('longrepr', '') or ''
+                if isinstance(longrepr, dict):
+                    longrepr = longrepr.get('reprcrash', {}).get('message', '') or str(longrepr)
+                error_type, error_msg = extract_error(longrepr)
+                nodeid    = t.get('nodeid', '')
+                test_file = nodeid.split('::')[0] if '::' in nodeid else nodeid
+                test_name = '::'.join(nodeid.split('::')[1:]) if '::' in nodeid else nodeid
+                entries.append({
+                    'ts': ts, 'pr': pr, 'author': author, 'branch': branch,
+                    'file': test_file, 'test': test_name,
+                    'error_type': error_type, 'error_msg': error_msg,
+                    'fix_applied': fix_applied,
+                })
+
+        else:  # vitest / jest
+            cwd = os.getcwd()
+            for suite in data.get('testResults', []):
+                for t in suite.get('testResults', []):
+                    if t.get('status') != 'failed':
+                        continue
+                    raw_msg    = (t.get('failureMessages') or [''])[0]
+                    error_type, error_msg = extract_error(raw_msg)
+                    ancestors  = t.get('ancestorTitles', [])
+                    test_name  = ' > '.join(ancestors + [t.get('title', '')])
+                    test_file  = suite.get('testFilePath', '').replace(cwd + '/', '')
+                    entries.append({
+                        'ts': ts, 'pr': pr, 'author': author, 'branch': branch,
+                        'file': test_file, 'test': test_name,
+                        'error_type': error_type, 'error_msg': error_msg,
+                        'fix_applied': fix_applied,
+                    })
+
+        with open('claude-log-entries.json', 'w') as f:
+            json.dump(entries, f)
+
+        print(f"Prepared {len(entries)} log entries.")
+        EOF
+
+    - name: Append error log to repository
+      if: inputs.enable-error-log == 'true' && steps.check.outputs.failures != '0'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ github.token }}
+        script: |
+          const fs = require('fs');
+
+          if (!fs.existsSync('claude-log-entries.json')) {
+            core.info('No log entries file found, skipping.');
+            return;
+          }
+
+          const entries = JSON.parse(fs.readFileSync('claude-log-entries.json', 'utf8'));
+          if (!entries.length) {
+            core.info('No log entries to write.');
+            return;
+          }
+
+          const newLines = entries.map(e => JSON.stringify(e)).join('\n');
+          const logPath  = 'logs/error_history.jsonl';
+          const owner    = context.repo.owner;
+          const repo     = context.repo.repo;
+
+          // Fetch existing file from main (if it exists)
+          let sha = undefined;
+          let existing = '';
+          try {
+            const { data } = await github.rest.repos.getContent({ owner, repo, path: logPath, ref: 'main' });
+            sha      = data.sha;
+            existing = Buffer.from(data.content, 'base64').toString('utf8').trimEnd();
+          } catch (e) {
+            core.info('Log file does not exist yet — will create it.');
+          }
+
+          const updated = existing ? existing + '\n' + newLines : newLines;
+          const prRef   = entries[0]?.pr || 'unknown';
+
+          await github.rest.repos.createOrUpdateFileContents({
+            owner, repo,
+            path: logPath,
+            message: `log: record ${entries.length} test failure(s) from PR #${prRef}`,
+            content: Buffer.from(updated + '\n').toString('base64'),
+            branch: 'main',
+            ...(sha ? { sha } : {}),
+          });
+
+          core.info(`Error log updated: ${entries.length} new entries written to ${logPath}`);
+
+    - name: Generate insights with Claude
+      id: insights
+      if: inputs.enable-insights == 'true' && steps.check.outputs.failures != '0' && github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        REPO_OWNER: ${{ github.repository_owner }}
+        REPO_NAME: ${{ github.event.repository.name }}
+        PR_AUTHOR: ${{ github.event.pull_request.user.login || github.actor }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        python3 << 'PYEOF'
+        import json, os, urllib.request, urllib.error, base64
+
+        token   = os.environ['GITHUB_TOKEN']
+        api_key = os.environ['ANTHROPIC_API_KEY']
+        owner   = os.environ['REPO_OWNER']
+        repo    = os.environ['REPO_NAME']
+        author  = os.environ['PR_AUTHOR']
+        pr_num  = os.environ['PR_NUMBER']
+
+        # 1. Fetch log from main
+        gh_url = f"https://api.github.com/repos/{owner}/{repo}/contents/logs/error_history.jsonl?ref=main"
+        gh_req = urllib.request.Request(gh_url, headers={
+            'Authorization': f'token {token}',
+            'Accept': 'application/vnd.github.v3+json',
+            'User-Agent': 'claude-autofix-action',
+        })
+        try:
+            with urllib.request.urlopen(gh_req) as resp:
+                raw     = json.loads(resp.read())
+                content = base64.b64decode(raw['content']).decode('utf-8')
+        except urllib.error.HTTPError as e:
+            print(f"Log file not found (HTTP {e.code}), skipping insights.")
+            exit(0)
+
+        all_entries    = [json.loads(l) for l in content.strip().splitlines() if l.strip()]
+        author_entries = [e for e in all_entries if e.get('author') == author]
+        total          = len(author_entries)
+
+        if total < 3:
+            print(f"Not enough data for @{author} ({total} entries, need at least 3). Skipping.")
+            exit(0)
+
+        # 2. Build prompt
+        recent   = author_entries[-20:]
+        log_text = '\n'.join(
+            f"- [{e['ts'][:10]}] {e['error_type']}: {e['error_msg']} | file: {e['file']} | fixed: {e['fix_applied']}"
+            for e in recent
+        )
+
+        prompt = f"""You are a coding mentor reviewing a developer's CI error history.
+Be specific, encouraging, and concise.
+
+Developer: @{author}
+Total recorded failures: {total}
+
+Recent failures (oldest to newest):
+{log_text}
+
+Write a short insight comment. Rules:
+- Identify 1 or 2 clear patterns (recurring error_type, same file, same area of code)
+- Give one concrete, actionable tip per pattern — reference actual values from the log
+- If fix_applied is often false, mention that the auto-fix struggled and why that might be
+- Maximum 6 lines. No greetings. No generic advice. Plain text only."""
+
+        # 3. Call Claude (Haiku — fast and cheap for this task)
+        payload = json.dumps({
+            "model": "claude-3-5-haiku-20241022",
+            "max_tokens": 300,
+            "messages": [{"role": "user", "content": prompt}]
+        }).encode()
+
+        cl_req = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=payload,
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            }
+        )
+        try:
+            with urllib.request.urlopen(cl_req) as resp:
+                result       = json.loads(resp.read())
+                insight_text = result['content'][0]['text'].strip()
+        except Exception as e:
+            print(f"Claude API error: {e}. Skipping insights.")
+            exit(0)
+
+        # 4. Write comment file
+        body  = f"## 🧠 Claude Insights — @{author}\n\n"
+        body += f"**{total} errors on record**\n\n"
+        body += insight_text
+        body += "\n\n---\n*Based on `logs/error_history.jsonl`. Needs at least 3 recorded failures to appear.*"
+
+        with open('claude-insights.md', 'w') as f:
+            f.write(body)
+
+        print(f"Insights generated for @{author} ({total} entries analysed).")
+        PYEOF
+
+    - name: Post insights comment on PR
+      if: inputs.enable-insights == 'true' && steps.check.outputs.failures != '0' && github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ github.token }}
+        script: |
+          const fs = require('fs');
+          if (!fs.existsSync('claude-insights.md')) {
+            core.info('No insights file — not enough data or an error occurred. Skipping.');
+            return;
+          }
+          const body = fs.readFileSync('claude-insights.md', 'utf8').trim();
+          if (!body) return;
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            body,
+          });
+          core.info('Insights comment posted to PR.');
 
     - name: Check for generated changes
       id: changes
