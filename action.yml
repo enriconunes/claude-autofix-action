@@ -346,20 +346,17 @@ runs:
             for e in recent
         )
 
-        prompt = f"""You are a coding mentor reviewing a developer's CI error history.
-Be specific, encouraging, and concise.
-
-Developer: @{author}
-Total recorded failures: {total}
-
-Recent failures (oldest to newest):
-{log_text}
-
-Write a short insight comment. Rules:
-- Identify 1 or 2 clear patterns (recurring error_type, same file, same area of code)
-- Give one concrete, actionable tip per pattern — reference actual values from the log
-- If fix_applied is often false, mention that the auto-fix struggled and why that might be
-- Maximum 6 lines. No greetings. No generic advice. Plain text only."""
+        prompt  = "You are a coding mentor reviewing a developer's CI error history.\n"
+        prompt += "Be specific, encouraging, and concise.\n\n"
+        prompt += f"Developer: @{author}\n"
+        prompt += f"Total recorded failures: {total}\n\n"
+        prompt += "Recent failures (oldest to newest):\n"
+        prompt += log_text + "\n\n"
+        prompt += "Write a short insight comment. Rules:\n"
+        prompt += "- Identify 1 or 2 clear patterns (recurring error_type, same file, same area of code)\n"
+        prompt += "- Give one concrete, actionable tip per pattern — reference actual values from the log\n"
+        prompt += "- If fix_applied is often false, mention that the auto-fix struggled and why that might be\n"
+        prompt += "- Maximum 6 lines. No greetings. No generic advice. Plain text only."
 
         # 3. Call Claude (Haiku — fast and cheap for this task)
         payload = json.dumps({
