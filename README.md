@@ -242,24 +242,74 @@ Review the fix PR, confirm the changes look correct, and click **"Merge pull req
 ## Available options
 
 ```yaml
-- uses: enriconunes/claude-autofix-action@v2
-  with:
-    anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+name: Claude AutoFix
 
-    # Test framework to use: pytest | vitest | jest (default: pytest)
-    test-framework: "pytest"
+on:
+  pull_request:
+    branches: [ main ]
 
-    # Source language: python | typescript | javascript (default: python)
-    language: "python"
+permissions:
+  contents: write
+  pull-requests: write
 
-    # Maximum number of fixes per run (default: 5)
-    max-fixes: "3"
+jobs:
+  autofix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-    # Python version to use — only relevant for pytest (default: 3.11)
-    python-version: "3.12"
+      - name: Claude AutoFix
+        uses: enriconunes/claude-autofix-action@v2
+        with:
+          # ── Required ────────────────────────────────────────────────────────
 
-    # Automatically create a PR with the fixes (default: true)
-    create-pr: "true"
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+
+          # ── Language and framework (optional) ───────────────────────────────
+
+          # Test framework to run.
+          # Options: "pytest" | "vitest" | "jest"
+          # Default: "pytest"
+          test-framework: "pytest"
+
+          # Source language of your project.
+          # Options: "python" | "typescript" | "javascript"
+          # Default: "python"
+          language: "python"
+
+          # ── Fix behaviour (optional) ─────────────────────────────────────────
+
+          # Maximum number of failing tests Claude will attempt to fix per run.
+          # Default: "5"
+          max-fixes: "5"
+
+          # Automatically open a PR with the generated fixes.
+          # Options: "true" | "false"
+          # Default: "true"
+          create-pr: "true"
+
+          # ── Python-specific (optional) ───────────────────────────────────────
+
+          # Python version used to run pytest. Ignored for vitest/jest projects.
+          # Default: "3.11"
+          python-version: "3.11"
+
+          # ── Error log (optional) ─────────────────────────────────────────────
+
+          # Append one JSONL entry per failing test to logs/error_history.jsonl
+          # in the main branch. Builds an error history per author, file and type.
+          # Does NOT consume Claude tokens.
+          # Options: "true" | "false"
+          # Default: "false"
+          enable-error-log: "false"
+
+          # Post a Claude-powered comment on the PR with patterns detected in the
+          # author's error history. Requires enable-error-log to have been active
+          # on previous runs. The comment only appears after 3+ recorded failures
+          # for the same author. Consumes Claude tokens (Haiku).
+          # Options: "true" | "false"
+          # Default: "false"
+          enable-insights: "false"
 ```
 
 ---

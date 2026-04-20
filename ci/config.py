@@ -15,6 +15,16 @@ FIX_CLAUDE_MODEL     = "claude-sonnet-4-5-20250929"  # used by claude_fix.py    
 
 FALLBACK_MODELS = ["claude-sonnet-4-20250514", "claude-3-5-sonnet-20241022"]
 
+# ── Error log settings ────────────────────────────────────────────────────────
+# Set to True to append a JSONL entry to logs/error_history.jsonl (in main) for
+# every failing test. Does NOT consume Claude API tokens — pure data collection.
+ENABLE_ERROR_LOG = False
+
+# Set to True to post a Claude-powered insight comment on the PR based on the
+# author's error history. Requires ENABLE_ERROR_LOG on previous runs to have data.
+# Uses Claude Haiku — low token cost. Needs at least 3 entries for the same author.
+ENABLE_INSIGHTS = False
+
 # ── Test generation settings ──────────────────────────────────────────────────
 # Set to True to automatically generate tests for new source files in PRs (trigger B).
 AUTO_GENERATE_TESTS_ON_PR     = False
