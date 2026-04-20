@@ -207,7 +207,9 @@ runs:
             for t in data.get('tests', []):
                 if t.get('outcome') != 'failed':
                     continue
-                longrepr = t.get('longrepr', '') or ''
+                # longrepr is nested inside the 'call' phase in pytest-json-report
+                call     = t.get('call') or {}
+                longrepr = call.get('longrepr') or t.get('longrepr') or ''
                 if isinstance(longrepr, dict):
                     longrepr = longrepr.get('reprcrash', {}).get('message', '') or str(longrepr)
                 error_type, error_msg = extract_error(longrepr)
@@ -297,6 +299,7 @@ runs:
     - name: Generate insights with Claude
       id: insights
       if: inputs.enable-insights == 'true' && steps.check.outputs.failures != '0' && github.event_name == 'pull_request'
+      continue-on-error: true
       shell: bash
       env:
         GITHUB_TOKEN: ${{ github.token }}
@@ -329,6 +332,9 @@ runs:
                 content = base64.b64decode(raw['content']).decode('utf-8')
         except urllib.error.HTTPError as e:
             print(f"Log file not found (HTTP {e.code}), skipping insights.")
+            exit(0)
+        except Exception as e:
+            print(f"Failed to fetch log file: {e}. Skipping insights.")
             exit(0)
 
         all_entries    = [json.loads(l) for l in content.strip().splitlines() if l.strip()]
